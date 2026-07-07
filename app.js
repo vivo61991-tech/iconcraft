@@ -2077,7 +2077,8 @@ function sampleCanvas(p){
 function openColorPicker(anchor,color,onPick){
   closeColorPicker();
   pickerState={color:(color||'#5AC8FA').toUpperCase(), onPick, hsl:hexToHsl(color||'#5AC8FA'),
-    expanded:false, editMode:false};
+    expanded:false, editMode:false, mode:(pickerState&&pickerState.mode)||'palette',
+    hue:hexToHsv(color||'#5AC8FA').h};
   const el=document.createElement('div');
   el.id='colorPicker';
   document.body.appendChild(el);
@@ -2102,7 +2103,7 @@ function closeColorPicker(){
 function setPickerColor(c, keepHue){
   if(!pickerState) return;
   pickerState.color=c.toUpperCase();
-  if(!keepHue) pickerState.hsl=hexToHsl(c);
+  if(!keepHue){ pickerState.hsl=hexToHsl(c); const v=hexToHsv(c).v; if(v>0.02) pickerState.hue=hexToHsv(c).h; }
   pickerState.onPick(pickerState.color);
   const el=$('colorPicker'); if(!el) return;
   const pv=el.querySelector('#cpPreview'), hx=el.querySelector('#cpHex'), sl=el.querySelector('#cpLight');
@@ -2126,12 +2127,19 @@ function renderPicker(){
       '<input class="inp" id="cpHex" value="'+st.color+'" maxlength="7" spellcheck="false">'+
       '<button class="cp-mini" id="cpEye" title="Conta-gotas: capturar cor de um elemento do desenho">'+
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.71 5.63l-2.34-2.34a.996.996 0 0 0-1.41 0l-3.12 3.12-1.93-1.91-1.41 1.41 1.42 1.42L3 16.25V21h4.75l9.92-9.92 1.42 1.42 1.41-1.41-1.92-1.92 3.12-3.12c.4-.4.4-1.03.01-1.42zM6.92 19L5 17.08l8.06-8.06 1.92 1.92L6.92 19z"/></svg></button>'+
-      '<button class="cp-mini" id="cpMode" title="Alternar entre paletas e roda de cores">'+(st.wheel?'▦':'◉')+'</button>'+
       '<button class="cp-mini" id="cpClose" title="Fechar">✕</button>'+
     '</div>'+
-    (st.wheel
+    '<div class="cp-tabs">'+
+      '<button class="cp-tab'+(st.mode==='palette'?' on':'')+'" data-mode="palette" title="Paletas">▦</button>'+
+      '<button class="cp-tab'+(st.mode==='box'?' on':'')+'" data-mode="box" title="Caixa de gradiente">◨</button>'+
+      '<button class="cp-tab'+(st.mode==='wheel'?' on':'')+'" data-mode="wheel" title="Roda de cores">◉</button>'+
+    '</div>'+
+    (st.mode==='wheel'
       ? '<div class="cp-wheel-wrap"><canvas id="cpWheel" width="220" height="220"></canvas><div id="cpWheelDot"></div></div>'+
         '<input type="range" id="cpVal" min="0" max="100" value="'+Math.round(hexToHsv(st.color).v*100)+'" title="Brilho">'
+      : st.mode==='box'
+      ? '<div class="cp-box-wrap"><canvas id="cpBox" width="240" height="180"></canvas><div id="cpBoxDot"></div></div>'+
+        '<input type="range" id="cpHue" min="0" max="360" value="'+Math.round(hexToHsv(st.color).h*360)+'" title="Matiz" class="cp-hue">'
       : '<input type="range" id="cpLight" min="0" max="100" value="50" title="Tonalidade: mais claro ← → mais escuro">'+
         '<div class="cp-label">Cores do tema</div>'+
         '<div class="cp-grid">'+THEME_COLORS.map(c=>cell(c)).join('')+'</div>'+
@@ -2153,6 +2161,7 @@ function renderPicker(){
     setPickerColor(c);
     addRecentColor(c);
   });
+  el.querySelectorAll('.cp-tab').forEach(b=>b.onclick=()=>{ st.mode=b.dataset.mode; renderPicker(); });
   el.querySelector('#cpHex').onchange=e=>{
     let v=e.target.value.trim(); if(v && v[0]!=='#') v='#'+v;
     if(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v)){
@@ -2160,7 +2169,8 @@ function renderPicker(){
       setPickerColor(v); addRecentColor(v);
     } else e.target.value=st.color;
   };
-  el.querySelector('#cpLight').oninput=e=>{
+  const lightSl=el.querySelector('#cpLight');
+  if(lightSl) lightSl.oninput=e=>{
     const {h,s}=st.hsl;
     const L=0.97 - (e.target.value/100)*0.94;
     st.hsl={h,s,l:L};
@@ -2174,8 +2184,8 @@ function renderPicker(){
   el.querySelector('#cpClose').onclick=()=>closeColorPicker();
   const me=el.querySelector('#cpMore'); if(me) me.onclick=()=>{ st.expanded=!st.expanded; renderPicker(); };
   const ed=el.querySelector('#cpEdit'); if(ed) ed.onclick=()=>{ st.editMode=!st.editMode; renderPicker(); };
-  const cm=el.querySelector('#cpMode'); if(cm) cm.onclick=()=>{ st.wheel=!st.wheel; renderPicker(); };
-  if(st.wheel) setupWheel(el);
+  if(st.mode==='wheel'){ try{ setupWheel(el); }catch(err){ console.error(err); } requestAnimationFrame(()=>{ if(pickerState&&pickerState.mode==='wheel') try{ setupWheel(el); }catch(e){} }); }
+  if(st.mode==='box'){ try{ setupBox(el); }catch(err){ console.error(err); } requestAnimationFrame(()=>{ if(pickerState&&pickerState.mode==='box') try{ setupBox(el); }catch(e){} }); }
 }
 /* ---- roda de cores (HSV) ---- */
 function hexToHsv(hex){
@@ -2197,6 +2207,52 @@ function hsvToHex(h,s,v){
     case 3: r=p;g=q;b=v;break; case 4: r=t;g=p;b=v;break; default: r=v;g=p;b=q;
   }
   return rgbToHex(r*255,g*255,b*255);
+}
+function setupBox(el){
+  const cv=el.querySelector('#cpBox'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const st=pickerState;
+  const hsv=hexToHsv(st.color);
+  if(st.hue==null) st.hue=hsv.h;
+  const hue=st.hue;
+  // fundo: matiz puro -> branco (horizontal), transparente -> preto (vertical)
+  const base=hsvToHex(hue,1,1);
+  ctx.fillStyle=base; ctx.fillRect(0,0,W,H);
+  const gw=ctx.createLinearGradient(0,0,W,0);
+  gw.addColorStop(0,'#ffffff'); gw.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=gw; ctx.fillRect(0,0,W,H);
+  const gb=ctx.createLinearGradient(0,0,0,H);
+  gb.addColorStop(0,'rgba(0,0,0,0)'); gb.addColorStop(1,'#000000');
+  ctx.fillStyle=gb; ctx.fillRect(0,0,W,H);
+  // marcador na posição de saturação/brilho atual
+  const dot=el.querySelector('#cpBoxDot');
+  const place=(s,v)=>{ dot.style.left=(s*W)+'px'; dot.style.top=((1-v)*H)+'px'; };
+  place(hsv.s, hsv.v);
+  const pick=e=>{
+    const r=cv.getBoundingClientRect();
+    let x=(e.clientX-r.left)/r.width, y=(e.clientY-r.top)/r.height;
+    x=Math.max(0,Math.min(1,x)); y=Math.max(0,Math.min(1,y));
+    const s=x, v=1-y;
+    place(s,v);
+    const hex=hsvToHex(st.hue,s,v);
+    st.color=hex.toUpperCase(); st.hsl=hexToHsl(hex);
+    st.onPick(st.color);
+    const pv=el.querySelector('#cpPreview'); if(pv) pv.style.background=st.color;
+    const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
+  };
+  let dragging=false;
+  cv.addEventListener('pointerdown',e=>{ dragging=true; cv.setPointerCapture(e.pointerId); pick(e); });
+  cv.addEventListener('pointermove',e=>{ if(dragging) pick(e); });
+  cv.addEventListener('pointerup',e=>{ dragging=false; addRecentColor(st.color); });
+  const hueSl=el.querySelector('#cpHue');
+  if(hueSl) hueSl.oninput=()=>{ st.hue=hueSl.value/360; setupBox(el); 
+    // ao mover o matiz, recomputa a cor mantendo s/v
+    const cur=hexToHsv(st.color);
+    const hex=hsvToHex(st.hue,cur.s,cur.v);
+    st.color=hex.toUpperCase(); st.hsl=hexToHsl(hex); st.onPick(st.color);
+    const pv=el.querySelector('#cpPreview'); if(pv) pv.style.background=st.color;
+    const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
+  };
 }
 function setupWheel(el){
   const cv=el.querySelector('#cpWheel'); if(!cv) return;

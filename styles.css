@@ -414,3 +414,25 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   /* some quando o drawer está aberto (a alça de fechar assume) */
   body.props-open #panelReopen{opacity:0;pointer-events:none}
 }
+
+/* ============ abas de modo do seletor de cores ============ */
+.cp-tabs{display:flex;gap:4px;margin:2px 0 8px;background:var(--bg2);border-radius:9px;padding:3px}
+.cp-tab{flex:1;padding:6px 0;border-radius:7px;color:var(--muted);font-size:15px;line-height:1;transition:.12s}
+.cp-tab.on{background:var(--accent-soft);color:var(--accent)}
+.cp-tab:hover{color:var(--text)}
+
+/* caixa de gradiente (estilo Word) */
+.cp-box-wrap{position:relative;width:240px;height:180px;margin:2px auto 8px}
+#cpBox{width:240px;height:180px;border-radius:8px;cursor:crosshair;touch-action:none;box-shadow:0 0 0 1px var(--line) inset}
+#cpBoxDot{
+  position:absolute;width:14px;height:14px;border-radius:50%;
+  border:2px solid #fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.55),0 1px 4px rgba(0,0,0,.5);
+  transform:translate(-50%,-50%);pointer-events:none;
+}
+.cp-hue{
+  width:100%;height:14px;-webkit-appearance:none;appearance:none;border-radius:7px;outline:none;
+  margin:0 0 4px;border:1px solid var(--line);
+  background:linear-gradient(to right,#f00 0%,#ff0 17%,#0f0 33%,#0ff 50%,#00f 67%,#f0f 83%,#f00 100%);
+}
+.cp-hue::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #666;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer}
+.cp-hue::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}
