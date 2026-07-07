@@ -1,5 +1,5 @@
 /* IconCraft — Service Worker (cache-first para o app shell) */
-const CACHE = 'iconcraft-v19';
+const CACHE = 'iconcraft-v20';
 const SHELL = [
   './',
   './index.html',

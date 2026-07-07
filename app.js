@@ -899,7 +899,7 @@ function setSelection(ids){
   ids=[...new Set(ids)].filter(id=>state.items.some(i=>i.id===id && i.kind==='stroke'));
   if(ids.length<=1){ state.selId = ids.length ? ids[0] : null; state.multi=[]; }
   else { state.selId=null; state.multi=ids; }
-  if((state.selId!=null || state.multi.length>1) && window.innerWidth<768) openProps();
+  if((state.selId!=null || state.multi.length>1) && window.innerWidth<768) openProps('props');
 }
 function renderHits(){
   gHits.innerHTML='';
@@ -1317,6 +1317,10 @@ function setTool(t){
   updateFab();
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
+  if(window.innerWidth<768){
+    const hasProps=['draw','erase','shape','bucket'].includes(t);
+    if(hasProps) openProps('props');
+  }
 }
 let mobileMenuOpen=false;
 function updateFab(){
@@ -1334,12 +1338,35 @@ function closeMobileMenu(){
   document.body.classList.remove('menu-open');
   updateFab();
 }
-function openProps(){ document.body.classList.add('props-open'); }
+let panelMode='props'; // 'props' = ferramenta/elemento · 'env' = canvas/projetos
+function applyPanelMode(){
+  const P=$('panel');
+  if(!P) return;
+  const mobile=window.innerWidth<768;
+  P.querySelectorAll('.sec[data-group]').forEach(s=>{
+    const env = s.getAttribute('data-group')==='env';
+    s.style.display = (!mobile) ? '' : ((panelMode==='env')===env ? '' : 'none');
+  });
+  // no modo props, seções sem data-group (ferramenta/elemento) aparecem;
+  // no modo env, escondê-las
+  P.querySelectorAll('.sec:not([data-group])').forEach(s=>{
+    s.style.display = (!mobile || panelMode==='props') ? '' : 'none';
+  });
+}
+function openProps(mode){
+  panelMode = mode || 'props';
+  document.body.classList.add('props-open');
+  applyPanelMode();
+  const P=$('panel'); if(P) P.scrollTop=0;
+}
 function closeProps(){ document.body.classList.remove('props-open'); }
-function toggleProps(){ document.body.classList.toggle('props-open'); }
+function toggleEnv(){
+  if(document.body.classList.contains('props-open') && panelMode==='env') closeProps();
+  else openProps('env');
+}
 document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('mobileFab').onclick=()=>{ mobileMenuOpen ? closeMobileMenu() : openMobileMenu(); };
-$('mobileProps').onclick=toggleProps;
+$('mobileProps').onclick=toggleEnv;
 $('btnSaveTool').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openPopMenu($('exportMenu'), $('btnSaveTool')); };
 $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
   closePopMenus();
@@ -1646,7 +1673,7 @@ function renderPanel(){
   '</div>';
 
   const r=state.ref;
-  html+='<div class="sec"><h3>Canvas</h3>'+
+  html+='<div class="sec" data-group="env"><h3>Canvas</h3>'+
     '<div class="row"><label class="lbl">Tamanho</label><select class="inp" id="cvSize" style="flex:1">'+
       [128,256,512,1024].map(v=>'<option value="'+v+'"'+(state.size===v?' selected':'')+'>'+v+' × '+v+' px</option>').join('')+'</select></div>'+
     '<label class="chk"><input type="checkbox" id="cvGrid"'+(state.gridOn?' checked':'')+'>Mostrar grade</label>'+
@@ -1658,6 +1685,7 @@ function renderPanel(){
     '<div class="hint" style="margin:-4px 0 8px">Do preto (0) ao branco (100), só para enxergar o objeto — a exportação PNG/SVG continua com fundo transparente.</div>'+
     '<div class="row"><label class="lbl">Zoom</label>'+
       '<input type="range" id="cvZoom" min="50" max="250" value="'+Math.round(state.zoom*100)+'"><span class="range-val" id="cvZoomv">'+Math.round(state.zoom*100)+'%</span></div>'+
+    '<div class="btn-row" style="margin-bottom:8px"><button class="btn sm" id="cvZoomFit">Ajustar à tela</button><button class="btn sm" id="cvZoom100">100%</button></div>'+
     '<div class="cp-label" style="margin:12px 0 7px;text-transform:uppercase;letter-spacing:.9px">Imagem de referência</div>'+
     '<div class="btn-row" style="margin-bottom:9px">'+
       '<button class="btn sm primary" id="refLoad">Carregar imagem…</button>'+
@@ -1671,7 +1699,7 @@ function renderPanel(){
     '<div class="hint">Grade, fundo e referência são apenas apoio visual do ambiente — nenhum deles entra na arte final. A referência também não é salva no projeto. Use a ferramenta (R) para arrastá-la.</div>'+
   '</div>';
 
-  html+='<div class="sec"><h3>Projetos <span class="tag" id="projCount"></span></h3>'+
+  html+='<div class="sec" data-group="env"><h3>Projetos <span class="tag" id="projCount"></span></h3>'+
     '<div class="btn-row" style="margin-bottom:10px">'+
       '<button class="btn sm primary" id="projSave">Salvar como…</button>'+
       '<button class="btn sm" id="projExport">Baixar .json</button>'+
@@ -1685,6 +1713,7 @@ function renderPanel(){
   bindPanel(it);
   renderProjects();
   reorderPanelForTool();
+  applyPanelMode();
 }
 function bindPanel(it){
   const multiSel2 = (state.multi && state.multi.length>1)
@@ -1808,6 +1837,8 @@ function bindPanel(it){
   const ga=$('cvGridAbove'); if(ga) ga.onchange=e=>{state.gridAbove=e.target.checked;drawGrid();autosave();};
   bindRange('cvBg',v=>{ localStorage.setItem(BG_KEY,String(Math.round(v))); applyBg(); });
   bindRange('cvZoom',v=>{state.zoom=v/100;applyBoardSize();applyRef();},'%');
+  const zf=$('cvZoomFit'); if(zf) zf.onclick=zoomFit;
+  const z1=$('cvZoom100'); if(z1) z1.onclick=()=>setZoom(1);
   $('projSave').onclick=saveProjectAs;
   $('projExport').onclick=exportProjectFile;
   $('projImport').onclick=importProjectFile;
@@ -2066,14 +2097,18 @@ function renderPicker(){
       '<input class="inp" id="cpHex" value="'+st.color+'" maxlength="7" spellcheck="false">'+
       '<button class="cp-mini" id="cpEye" title="Conta-gotas: capturar cor de um elemento do desenho">'+
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.71 5.63l-2.34-2.34a.996.996 0 0 0-1.41 0l-3.12 3.12-1.93-1.91-1.41 1.41 1.42 1.42L3 16.25V21h4.75l9.92-9.92 1.42 1.42 1.41-1.41-1.92-1.92 3.12-3.12c.4-.4.4-1.03.01-1.42zM6.92 19L5 17.08l8.06-8.06 1.92 1.92L6.92 19z"/></svg></button>'+
+      '<button class="cp-mini" id="cpMode" title="Alternar entre paletas e roda de cores">'+(st.wheel?'▦':'◉')+'</button>'+
       '<button class="cp-mini" id="cpClose" title="Fechar">✕</button>'+
     '</div>'+
-    '<input type="range" id="cpLight" min="0" max="100" value="50" title="Tonalidade: mais claro ← → mais escuro">'+
-    '<div class="cp-label">Cores do tema</div>'+
-    '<div class="cp-grid">'+THEME_COLORS.map(c=>cell(c)).join('')+'</div>'+
-    [0,1,2,3,4].map(row=>'<div class="cp-grid">'+THEME_COLORS.map(c=>cell(variantsOf(c)[row])).join('')+'</div>').join('')+
-    '<div class="cp-label" style="margin-top:9px">Cores padrão</div>'+
-    '<div class="cp-grid">'+STD_COLORS.map(c=>cell(c)).join('')+'</div>'+
+    (st.wheel
+      ? '<div class="cp-wheel-wrap"><canvas id="cpWheel" width="220" height="220"></canvas><div id="cpWheelDot"></div></div>'+
+        '<input type="range" id="cpVal" min="0" max="100" value="'+Math.round(hexToHsv(st.color).v*100)+'" title="Brilho">'
+      : '<input type="range" id="cpLight" min="0" max="100" value="50" title="Tonalidade: mais claro ← → mais escuro">'+
+        '<div class="cp-label">Cores do tema</div>'+
+        '<div class="cp-grid">'+THEME_COLORS.map(c=>cell(c)).join('')+'</div>'+
+        [0,1,2,3,4].map(row=>'<div class="cp-grid">'+THEME_COLORS.map(c=>cell(variantsOf(c)[row])).join('')+'</div>').join('')+
+        '<div class="cp-label" style="margin-top:9px">Cores padrão</div>'+
+        '<div class="cp-grid">'+STD_COLORS.map(c=>cell(c)).join('')+'</div>')+
     '<div class="cp-label" style="margin-top:9px"><span>Cores recentes</span><span>'+
       (recents.length?'<button class="cp-mini'+(st.editMode?' on':'')+'" id="cpEdit">'+(st.editMode?'Concluir':'Editar')+'</button>':'')+
       (recents.length>10?'<button class="cp-mini" id="cpMore">'+(st.expanded?'▲':'▼')+'</button>':'')+
@@ -2110,6 +2145,76 @@ function renderPicker(){
   el.querySelector('#cpClose').onclick=()=>closeColorPicker();
   const me=el.querySelector('#cpMore'); if(me) me.onclick=()=>{ st.expanded=!st.expanded; renderPicker(); };
   const ed=el.querySelector('#cpEdit'); if(ed) ed.onclick=()=>{ st.editMode=!st.editMode; renderPicker(); };
+  const cm=el.querySelector('#cpMode'); if(cm) cm.onclick=()=>{ st.wheel=!st.wheel; renderPicker(); };
+  if(st.wheel) setupWheel(el);
+}
+/* ---- roda de cores (HSV) ---- */
+function hexToHsv(hex){
+  const [r,g,b]=hexToRgb(hex).map(v=>v/255);
+  const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+  let h=0;
+  if(d!==0){
+    if(max===r) h=((g-b)/d+(g<b?6:0))/6;
+    else if(max===g) h=((b-r)/d+2)/6;
+    else h=((r-g)/d+4)/6;
+  }
+  return {h, s:max===0?0:d/max, v:max};
+}
+function hsvToHex(h,s,v){
+  let r,g,b;
+  const i=Math.floor(h*6), f=h*6-i, p=v*(1-s), q=v*(1-f*s), t=v*(1-(1-f)*s);
+  switch(i%6){
+    case 0: r=v;g=t;b=p;break; case 1: r=q;g=v;b=p;break; case 2: r=p;g=v;b=t;break;
+    case 3: r=p;g=q;b=v;break; case 4: r=t;g=p;b=v;break; default: r=v;g=p;b=q;
+  }
+  return rgbToHex(r*255,g*255,b*255);
+}
+function setupWheel(el){
+  const cv=el.querySelector('#cpWheel'); if(!cv) return;
+  const ctx=cv.getContext('2d'), W=cv.width, R=W/2;
+  const st=pickerState, hsv=hexToHsv(st.color);
+  // desenha a roda de matiz/saturação no brilho atual
+  const img=ctx.createImageData(W,W), d=img.data;
+  for(let y=0;y<W;y++) for(let x=0;x<W;x++){
+    const dx=x-R, dy=y-R, dist=Math.hypot(dx,dy);
+    const i=(y*W+x)*4;
+    if(dist>R){ d[i+3]=0; continue; }
+    let h=(Math.atan2(dy,dx)/(2*Math.PI)); if(h<0) h+=1;
+    const s=Math.min(1,dist/R);
+    const [rr,gg,bb]=hexToRgb(hsvToHex(h,s,hsv.v));
+    d[i]=rr; d[i+1]=gg; d[i+2]=bb; d[i+3]=255;
+  }
+  ctx.putImageData(img,0,0);
+  // posiciona o marcador
+  const dot=el.querySelector('#cpWheelDot');
+  const place=(h,s)=>{
+    const ang=h*2*Math.PI, rad=s*R;
+    dot.style.left=(R+Math.cos(ang)*rad)+'px';
+    dot.style.top=(R+Math.sin(ang)*rad)+'px';
+  };
+  place(hsv.h,hsv.s);
+  const pick=e=>{
+    const r=cv.getBoundingClientRect();
+    const scale=W/r.width;
+    let dx=(e.clientX-r.left)*scale-R, dy=(e.clientY-r.top)*scale-R;
+    let dist=Math.hypot(dx,dy);
+    if(dist>R){ dx*=R/dist; dy*=R/dist; dist=R; }
+    let h=(Math.atan2(dy,dx)/(2*Math.PI)); if(h<0) h+=1;
+    const s=Math.min(1,dist/R);
+    const v=(el.querySelector('#cpVal').value)/100;
+    place(h,s);
+    const hex=hsvToHex(h,s,v);
+    st.color=hex.toUpperCase(); st.hsl=hexToHsl(hex);
+    st.onPick(st.color);
+    const pv=el.querySelector('#cpPreview'); if(pv) pv.style.background=st.color;
+    const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
+  };
+  let dragging=false;
+  cv.addEventListener('pointerdown',e=>{ dragging=true; cv.setPointerCapture(e.pointerId); pick(e); });
+  cv.addEventListener('pointermove',e=>{ if(dragging) pick(e); });
+  cv.addEventListener('pointerup',e=>{ dragging=false; addRecentColor(st.color); });
+  const val=el.querySelector('#cpVal');
+  if(val) val.oninput=()=>{ setupWheel(el); };
 }
 /* conta-gotas: intercepta o clique no board antes das ferramentas */
 $('board').addEventListener('pointerdown',e=>{
@@ -2201,6 +2306,19 @@ $('board').addEventListener('pointerdown',e=>{
     if(smoothSession) smoothRetarget();
   }
 });
+function setZoom(z){
+  state.zoom=Math.max(0.25,Math.min(3,z));
+  applyBoardSize(); applyRef();
+  const zc=$('cvZoom'); if(zc){ zc.value=Math.round(state.zoom*100); const zv=$('cvZoomv'); if(zv) zv.textContent=Math.round(state.zoom*100)+'%'; }
+}
+function zoomFit(){
+  const ws=$('workspace');
+  const availW=ws.clientWidth-32, availH=ws.clientHeight-32;
+  const base=Math.min(680, state.size);
+  const z=Math.min(availW/base, availH/base);
+  setZoom(Math.max(0.25, Math.min(2.5, z)));
+  ws.scrollLeft=0; ws.scrollTop=0;
+}
 /* ---------------- Pan/Zoom por toque (ferramenta P) ---------------- */
 const activePointers=new Map();
 let pinch=null;

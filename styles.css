@@ -384,3 +384,16 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   #panel .empty{padding:16px 14px;font-size:12px}
   #panel .hint{display:none}
 }
+
+/* ============ roda de cores ============ */
+.cp-wheel-wrap{position:relative;width:220px;height:220px;margin:4px auto 8px}
+#cpWheel{width:220px;height:220px;border-radius:50%;cursor:crosshair;touch-action:none;box-shadow:0 0 0 1px var(--line) inset}
+#cpWheelDot{
+  position:absolute;width:14px;height:14px;border-radius:50%;
+  border:2px solid #fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.5),0 1px 4px rgba(0,0,0,.5);
+  transform:translate(-50%,-50%);pointer-events:none;
+}
+#cpVal{width:100%;height:14px;-webkit-appearance:none;appearance:none;border-radius:7px;outline:none;margin:2px 0 6px;
+  background:linear-gradient(to right,#000,#fff);border:1px solid var(--line)}
+#cpVal::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #666;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer}
+#cpVal::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}
