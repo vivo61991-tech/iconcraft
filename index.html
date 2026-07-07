@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#12141c">
+<title>IconCraft — Editor de Ícones</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="mark"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div>
+    Icon<em>Craft</em>
+  </div>
+  <div class="hd-sep"></div>
+  <button class="btn" id="btnRevert" title="Voltar os traços processados ao desenho original">Reverter</button>
+  <div class="hd-sep"></div>
+  <button class="btn" id="btnMirror" title="Espelho ao vivo: o que você desenha de um lado é replicado no outro em tempo real">
+    <svg viewBox="0 0 24 24"><path d="M11 2h2v20h-2zM3 6l5 6-5 6V6zm18 0v12l-5-6 5-6z"/></svg>
+    <span id="mirrorLbl">Espelho: off</span>
+  </button>
+  <div class="hd-sep"></div>
+  <button class="btn sm" id="btnUndo" title="Desfazer (Ctrl+Z)">↩</button>
+  <button class="btn sm" id="btnRedo" title="Refazer (Ctrl+Y)">↪</button>
+  <div class="spacer"></div>
+  <button class="btn" id="btnExportSvg">SVG</button>
+  <button class="btn" id="btnExportPng">PNG</button>
+  <div class="hd-sep"></div>
+  <button class="btn" id="themeBtn" title="Alternar tema claro/escuro"><svg id="themeIcon" viewBox="0 0 24 24"></svg></button>
+</header>
+
+<main>
+  <nav id="toolbox">
+    <button class="tool on" data-tool="draw" title="Desenhar (D)">
+      <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+    </button>
+    <button class="tool" data-tool="shape" title="Forma geométrica — escolha no painel e arraste no canvas (G)">
+      <svg viewBox="0 0 24 24"><path d="M12 2l5 8H7l5-8zm-6.5 20a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zM13 13h9v9h-9v-9z"/></svg>
+    </button>
+    <button class="tool" data-tool="erase" title="Pincel negativo — desenha transparência (E)">
+      <svg viewBox="0 0 24 24"><path d="M16.24 3.56l4.95 4.94c.78.79.78 2.05 0 2.84L12 20.53a4.008 4.008 0 0 1-5.66 0L2.81 17c-.78-.79-.78-2.05 0-2.84l10.6-10.6c.79-.78 2.05-.78 2.83 0zM4.22 15.58l3.54 3.53c.78.79 2.04.79 2.83 0l3.53-3.53-6.36-6.36-3.54 3.53c-.78.79-.78 2.05 0 2.83z"/></svg>
+    </button>
+    <button class="tool" data-tool="bucket" title="Balde de tinta — preenche regiões de cor sólida (B)">
+      <svg viewBox="0 0 24 24"><path d="M19 11l-8-8-1.4 1.4 1.8 1.8-6.6 6.6c-.6.6-.6 1.5 0 2.1l5.2 5.2c.3.3.7.4 1 .4s.8-.1 1-.4l7-7c.6-.6.6-1.5 0-2.1zM6.2 13L11 8.2 15.8 13H6.2zM20.5 15s-1.5 2.7-1.5 4c0 .8.7 1.5 1.5 1.5S22 19.8 22 19c0-1.3-1.5-4-1.5-4z"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool" data-tool="select" title="Selecionar e mover (S)">
+      <svg viewBox="0 0 24 24"><path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2 1-3.2-7.4L7 18.5z"/></svg>
+    </button>
+    <button class="tool" data-tool="nodes" title="Editar nós — clique num traço e arraste os pontos (N)">
+      <svg viewBox="0 0 24 24"><path d="M5 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm14 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM5 5c4 0 6 2 7 7s3 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="5" cy="5" r="2.4"/><circle cx="19" cy="19" r="2.4"/><circle cx="12" cy="12" r="2"/></svg>
+    </button>
+    <button class="tool" id="btnSmoothTool" title="Suavizar traço: barra do reto ao redondo (respeita as extremidades)">
+      <svg viewBox="0 0 24 24"><path d="M2.5 16c3.2-9 6.3 9 9.5 0s6.3 9 9.5 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <button class="tool" data-tool="ref" title="Mover imagem de referência (R)">
+      <svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool" id="btnClearAll" title="Limpar tudo">
+      <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+    </button>
+  </nav>
+
+  <div id="workspace">
+    <div id="board">
+      <img id="refImg" alt="" draggable="false">
+      <svg id="underlay"></svg>
+      <canvas id="composite"></canvas>
+      <svg id="overlay"></svg>
+    </div>
+  </div>
+
+  <aside id="panel"></aside>
+</main>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
