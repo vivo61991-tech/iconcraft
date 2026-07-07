@@ -18,14 +18,14 @@ const state = {
   gridAbove: false,
   items: [],           // {id,kind:'stroke'|'fill', erase, raw, pts, closed, processed, nib, w, color, opacity, cap, fillOn, fill, fillOpacity, d}
   nextId: 1,
-  tool: 'draw',
+  tool: 'select',
   selId: null,
   multi: [],
   zoom: 1,
   mirror: 'off',       // 'off' | 'v' | 'h'
   shapeKind: 'rect',
   navMode: 'select',   // último modo do FAB de navegação: 'select' | 'pan'
-  lastCreate: 'draw',  // última ferramenta de criação usada (ícone do FAB esquerdo)
+  lastCreate: 'draw',  // última ferramenta de criação usada (ícone do FAB esquerdo) — lápis por padrão
   bucket: { color:'#5ac8fa', tolerance:60, opacity:100 },
   ref: { src:null, x:0, y:0, scale:1, opacity:40, visible:true }
 };
@@ -1395,6 +1395,7 @@ $('mobileNav').onclick=()=>{
   setTool(state.navMode);
 };
 $('mobileProps').onclick=toggleEnv;
+$('panelReopen').onclick=()=>openProps('props');
 $('btnSaveTool').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openPopMenu($('exportMenu'), $('btnSaveTool')); };
 $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
   closePopMenus();
@@ -2439,7 +2440,8 @@ function init(){
     const sv=localStorage.getItem(AUTOSAVE_KEY);
     if(sv) loadProjectData(JSON.parse(sv));
   }catch(e){}
-  renderPanel(); updateUndoBtns();
+  setTool('select');
+  updateUndoBtns();
   if('serviceWorker' in navigator && location.protocol.startsWith('http')){
     navigator.serviceWorker.register('sw.js').catch(()=>{});
   }
