@@ -912,7 +912,7 @@ function renderHits(){
     hit.setAttribute('fill', it.closed ? 'rgba(0,0,0,0)' : 'none');
     hit.setAttribute('stroke','transparent');
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
-    hit.style.cursor='pointer';
+    if(!['draw','erase','shape','pan'].includes(state.tool)) hit.style.cursor='pointer';
     hit.addEventListener('pointerdown',e=>{
       if(state.tool==='draw'||state.tool==='erase'||state.tool==='shape'||state.tool==='bucket'||state.tool==='ref') return;
       e.stopPropagation();
@@ -943,6 +943,7 @@ function renderHits(){
     gHits.appendChild(hit);
   }
   renderUi();
+  if(typeof refreshBrushCursor==='function') refreshBrushCursor();
 }
 function renderUi(){
   gUi.innerHTML='';
@@ -1309,12 +1310,58 @@ function startRefDrag(ev){
   document.addEventListener('pointerup',up);
 }
 /* --------- ferramentas --------- */
+function buildBrushCursor(){
+  // desenha a ponta do traço no tamanho/forma atuais como cursor SVG
+  const ps=pendingStyle;
+  const zoom=state.zoom||1;
+  const nib=ps.nib||'round';
+  const erase = state.tool==='erase';
+  const color = erase ? '#ff5d73' : (ps.color||'#000');
+  // tamanho aparente da ponta na tela (px lógicos * zoom), com limites
+  let w = ps.w * zoom;
+  w = Math.max(4, Math.min(110, w));
+  const pad=4, sw=1.2;
+  const S=Math.ceil(w+pad*2);
+  const c=S/2;
+  let shape;
+  if(nib==='round'){
+    // diâmetro externo = w exatamente: o anel de contorno fica por DENTRO
+    const r=Math.max(0.5, w/2 - sw/2);
+    shape='<circle cx="'+c+'" cy="'+c+'" r="'+r+'" fill="'+(erase?'none':color)+'" '+
+      'fill-opacity="'+(erase?0:0.28)+'" stroke="'+color+'" stroke-width="'+sw+'"/>';
+  } else {
+    // pena caligráfica: retângulo fino no ângulo da pena
+    const ang={h:0,v:90,d1:45,d2:135}[nib]||0;
+    const len=w, thick=Math.max(2,(ps.w2||4)*zoom);
+    const lx=len-sw, ty=thick-sw;
+    shape='<g transform="rotate('+ang+' '+c+' '+c+')">'+
+      '<rect x="'+(c-lx/2)+'" y="'+(c-ty/2)+'" width="'+lx+'" height="'+ty+'" rx="'+(ty/2)+'" '+
+      'fill="'+color+'" fill-opacity="'+(erase?0.2:0.42)+'" stroke="'+color+'" stroke-width="'+sw+'"/></g>';
+  }
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+S+'" height="'+S+'" viewBox="0 0 '+S+' '+S+'">'+
+    shape+'<circle cx="'+c+'" cy="'+c+'" r="1.3" fill="'+color+'"/></svg>';
+  const url='data:image/svg+xml;base64,'+btoa(svg);
+  return 'url('+url+') '+Math.round(c)+' '+Math.round(c)+', crosshair';
+}
+function setBoardCursor(css){
+  const b=$('board'); if(!b) return;
+  b.style.cursor=css;
+  ['overlay','composite','underlay'].forEach(id=>{ const e=$(id); if(e) e.style.cursor=css; });
+}
+function refreshBrushCursor(){
+  if(['draw','erase','shape'].includes(state.tool)) setBoardCursor(buildBrushCursor());
+}
 function setTool(t){
   state.tool=t;
   document.querySelectorAll('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
-  $('board').classList.toggle('tool-ref', t==='ref');
-  const cur={draw:'crosshair',erase:'crosshair',shape:'crosshair',bucket:'cell',select:'default',nodes:'default',ref:'move',pan:'grab'};
-  $('board').style.cursor=cur[t]||'default';
+  const bd=$('board');
+  bd.classList.toggle('tool-ref', t==='ref');
+  // classe genérica com a ferramenta atual (para CSS de cursor/pointer-events)
+  bd.className=bd.className.replace(/\btoolmode-\w+/g,'').trim();
+  bd.classList.add('toolmode-'+t);
+  const cur={bucket:'cell',select:'default',nodes:'default',ref:'move',pan:'grab'};
+  if(['draw','erase','shape'].includes(t)) setBoardCursor(buildBrushCursor());
+  else setBoardCursor(cur[t]||'default');
   if(t==='ref' && !state.ref.src) toast('Carregue uma imagem de referência no painel à direita.');
   if(t==='select' || t==='pan') state.navMode=t;
   if(CREATE_TOOLS.includes(t)) state.lastCreate=t;
@@ -1803,10 +1850,10 @@ function bindPanel(it){
   document.querySelectorAll('.shape-pick').forEach(b=>b.onclick=()=>{
     state.shapeKind=b.dataset.shape; renderPanel();
   });
-  bindNib('pdNib',v=>{pendingStyle.nib=v;renderPanel();});
-  bindRange('pdW',v=>{pendingStyle.w=v;});
-  bindRange('pdW2',v=>{pendingStyle.w2=v;});
-  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v;});
+  bindNib('pdNib',v=>{pendingStyle.nib=v;renderPanel();refreshBrushCursor();});
+  bindRange('pdW',v=>{pendingStyle.w=v;refreshBrushCursor();});
+  bindRange('pdW2',v=>{pendingStyle.w2=v;refreshBrushCursor();});
+  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v;refreshBrushCursor();});
   bindColorField('bkColor', ()=>state.bucket.color, v=>{state.bucket.color=v;});
   bindRange('bkOp',v=>{state.bucket.opacity=v;});
   bindRange('bkTol',v=>{state.bucket.tolerance=v;});
@@ -2136,7 +2183,7 @@ function renderPicker(){
     '</div>'+
     (st.mode==='wheel'
       ? '<div class="cp-wheel-wrap"><canvas id="cpWheel" width="220" height="220"></canvas><div id="cpWheelDot"></div></div>'+
-        '<input type="range" id="cpVal" min="0" max="100" value="'+Math.round(hexToHsv(st.color).v*100)+'" title="Brilho">'
+        '<input type="range" id="cpVal" min="0" max="100" value="'+Math.round(hexToHsl(st.color).l*100)+'" title="Tonalidade (preto → cor → branco)" class="cp-tone">'
       : st.mode==='box'
       ? '<div class="cp-box-wrap"><canvas id="cpBox" width="240" height="180"></canvas><div id="cpBoxDot"></div></div>'+
         '<input type="range" id="cpHue" min="0" max="360" value="'+Math.round(hexToHsv(st.color).h*360)+'" title="Matiz" class="cp-hue">'
@@ -2257,27 +2304,54 @@ function setupBox(el){
 function setupWheel(el){
   const cv=el.querySelector('#cpWheel'); if(!cv) return;
   const ctx=cv.getContext('2d'), W=cv.width, R=W/2;
-  const st=pickerState, hsv=hexToHsv(st.color);
-  // desenha a roda de matiz/saturação no brilho atual
+  const st=pickerState;
+  const hslCur=hexToHsl(st.color);
+  // matiz/saturação da versão PURA da cor (L=0.5) — posiciona o ponto na roda
+  const pureHex=hslToHex(hslCur.h, hslCur.s, 0.5);
+  const hsv=hexToHsv(pureHex);
+  hsv.h=hslCur.h;
+  // ESTILO FIGMA: a roda mostra todas as cores em brilho máximo (v=1).
+  // O escuro/claro fica só na barra de tonalidade abaixo.
   const img=ctx.createImageData(W,W), d=img.data;
   for(let y=0;y<W;y++) for(let x=0;x<W;x++){
     const dx=x-R, dy=y-R, dist=Math.hypot(dx,dy);
     const i=(y*W+x)*4;
-    if(dist>R){ d[i+3]=0; continue; }
+    if(dist>R+0.5){ d[i+3]=0; continue; }
     let h=(Math.atan2(dy,dx)/(2*Math.PI)); if(h<0) h+=1;
     const s=Math.min(1,dist/R);
-    const [rr,gg,bb]=hexToRgb(hsvToHex(h,s,hsv.v));
-    d[i]=rr; d[i+1]=gg; d[i+2]=bb; d[i+3]=255;
+    const [rr,gg,bb]=hexToRgb(hsvToHex(h,s,1));
+    d[i]=rr; d[i+1]=gg; d[i+2]=bb;
+    d[i+3]= dist>R-1 ? Math.max(0,255*(R+0.5-dist)/1.5) : 255; // borda suave
   }
   ctx.putImageData(img,0,0);
-  // posiciona o marcador
   const dot=el.querySelector('#cpWheelDot');
-  const place=(h,s)=>{
-    const ang=h*2*Math.PI, rad=s*R;
-    dot.style.left=(R+Math.cos(ang)*rad)+'px';
-    dot.style.top=(R+Math.sin(ang)*rad)+'px';
+  const place=(h,s)=>{ const ang=h*2*Math.PI, rad=s*R; dot.style.left=(R+Math.cos(ang)*rad)+'px'; dot.style.top=(R+Math.sin(ang)*rad)+'px'; };
+  place(hsv.h, hsv.s);
+  // barra de tonalidade estilo Figma: preto (0) -> cor pura (50) -> branco (100)
+  const tone=el.querySelector('#cpVal');
+  // matiz e saturação-base (em HSL) da cor pura escolhida na roda
+  let baseHS = { h: hexToHsl(hsvToHex(hsv.h, hsv.s, 1)).h, s: hexToHsl(hsvToHex(hsv.h, hsv.s, 1)).s };
+  const toneToHex=(pct)=>{
+    const l=pct/100;                 // 0=preto, 0.5=cor cheia, 1=branco
+    return hslToHex(baseHS.h, baseHS.s, l);
   };
-  place(hsv.h,hsv.s);
+  const paintTone=()=>{
+    if(!tone) return;
+    const mid=hslToHex(baseHS.h, baseHS.s, 0.5);
+    tone.style.background='linear-gradient(to right,#000 0%,'+mid+' 50%,#fff 100%)';
+  };
+  paintTone();
+  const applyFromWheel=(h,s)=>{
+    // atualiza matiz/saturação base a partir da roda
+    baseHS = { h: hexToHsl(hsvToHex(h,s,1)).h, s: hexToHsl(hsvToHex(h,s,1)).s };
+    const pct = tone ? +tone.value : 50;
+    const hex = toneToHex(pct);
+    st.color=hex.toUpperCase(); st.hsl=hexToHsl(hex); st.hue=h;
+    st.onPick(st.color);
+    const pv=el.querySelector('#cpPreview'); if(pv) pv.style.background=st.color;
+    const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
+    paintTone();
+  };
   const pick=e=>{
     const r=cv.getBoundingClientRect();
     const scale=W/r.width;
@@ -2286,20 +2360,20 @@ function setupWheel(el){
     if(dist>R){ dx*=R/dist; dy*=R/dist; dist=R; }
     let h=(Math.atan2(dy,dx)/(2*Math.PI)); if(h<0) h+=1;
     const s=Math.min(1,dist/R);
-    const v=(el.querySelector('#cpVal').value)/100;
     place(h,s);
-    const hex=hsvToHex(h,s,v);
-    st.color=hex.toUpperCase(); st.hsl=hexToHsl(hex);
-    st.onPick(st.color);
-    const pv=el.querySelector('#cpPreview'); if(pv) pv.style.background=st.color;
-    const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
+    applyFromWheel(h,s);
   };
   let dragging=false;
   cv.addEventListener('pointerdown',e=>{ dragging=true; cv.setPointerCapture(e.pointerId); pick(e); });
   cv.addEventListener('pointermove',e=>{ if(dragging) pick(e); });
   cv.addEventListener('pointerup',e=>{ dragging=false; addRecentColor(st.color); });
-  const val=el.querySelector('#cpVal');
-  if(val) val.oninput=()=>{ setupWheel(el); };
+  if(tone) tone.oninput=()=>{
+    const hex=toneToHex(+tone.value);
+    st.color=hex.toUpperCase(); st.hsl=hexToHsl(hex);
+    st.onPick(st.color);
+    const pv=el.querySelector('#cpPreview'); if(pv) pv.style.background=st.color;
+    const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
+  };
 }
 /* conta-gotas: intercepta o clique no board antes das ferramentas */
 $('board').addEventListener('pointerdown',e=>{
@@ -2393,7 +2467,7 @@ $('board').addEventListener('pointerdown',e=>{
 });
 function setZoom(z){
   state.zoom=Math.max(0.25,Math.min(3,z));
-  applyBoardSize(); applyRef();
+  applyBoardSize(); applyRef(); refreshBrushCursor();
   const zc=$('cvZoom'); if(zc){ zc.value=Math.round(state.zoom*100); const zv=$('cvZoomv'); if(zv) zv.textContent=Math.round(state.zoom*100)+'%'; }
 }
 function zoomFit(){
@@ -2432,7 +2506,7 @@ function panPointerMove(e){
     const rect=board.getBoundingClientRect();
     const px=pinch.cx-rect.left, py=pinch.cy-rect.top;
     const k=nz/state.zoom;
-    state.zoom=nz; applyBoardSize(); applyRef();
+    state.zoom=nz; applyBoardSize(); applyRef(); refreshBrushCursor();
     wsE.scrollLeft += px*(k-1); wsE.scrollTop += py*(k-1);
     const z=$('cvZoom'); if(z){ z.value=Math.round(nz*100); const zv=$('cvZoomv'); if(zv) zv.textContent=Math.round(nz*100)+'%'; }
   } else if(activePointers.size===1 && board._panStart){
@@ -2461,7 +2535,7 @@ ws.addEventListener('wheel',e=>{
   const px=e.clientX-rect.left, py=e.clientY-rect.top;
   const k=nz/old;
   state.zoom=nz;
-  applyBoardSize(); applyRef();
+  applyBoardSize(); applyRef(); refreshBrushCursor();
   ws.scrollLeft += px*(k-1);
   ws.scrollTop  += py*(k-1);
   const z=$('cvZoom');

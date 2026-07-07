@@ -436,3 +436,38 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 }
 .cp-hue::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #666;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer}
 .cp-hue::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}
+
+/* barra de tonalidade da roda (escuro -> claro), estilo Figma */
+.cp-tone{
+  width:100%;height:14px;-webkit-appearance:none;appearance:none;border-radius:7px;outline:none;
+  margin:8px 0 6px;border:1px solid var(--line);
+}
+.cp-tone::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #666;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer}
+.cp-tone::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}
+
+/* marcadores mais nítidos nas barras do seletor (indica onde parou) */
+.cp-tone::-webkit-slider-thumb,.cp-hue::-webkit-slider-thumb{
+  width:15px;height:15px;border:2.5px solid #fff;
+  box-shadow:0 0 0 1px rgba(0,0,0,.4),0 1px 4px rgba(0,0,0,.5);
+}
+.cp-tone::-moz-range-thumb,.cp-hue::-moz-range-thumb{
+  width:13px;height:13px;border:2.5px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.4)
+}
+
+/* roda de cores (restaurado) */
+.cp-wheel-wrap{position:relative;width:220px;height:220px;margin:4px auto 6px}
+#cpWheel{width:220px;height:220px;border-radius:50%;cursor:crosshair;touch-action:none;display:block}
+#cpWheelDot{
+  position:absolute;width:16px;height:16px;border-radius:50%;
+  border:2.5px solid #fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.6),0 1px 5px rgba(0,0,0,.5);
+  transform:translate(-50%,-50%);pointer-events:none;background:transparent;
+}
+
+/* cursor do pincel sempre visível sobre a folha nas ferramentas de traço:
+   nenhuma camada ou área de clique impõe cursor próprio nesses modos */
+#board.toolmode-draw #overlay,#board.toolmode-draw #overlay *,
+#board.toolmode-erase #overlay,#board.toolmode-erase #overlay *,
+#board.toolmode-shape #overlay,#board.toolmode-shape #overlay *{cursor:inherit !important}
+#board.toolmode-draw .stroke-hit,
+#board.toolmode-erase .stroke-hit,
+#board.toolmode-shape .stroke-hit{pointer-events:none !important}
