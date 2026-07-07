@@ -292,3 +292,36 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 .thandle.rot{fill:var(--accent-soft)}
 .sm-end{font-size:10.5px;color:var(--muted);font-weight:700;white-space:nowrap;letter-spacing:.3px}
 .marquee{fill:rgba(90,200,250,.10);stroke:var(--accent);stroke-width:1.2;stroke-dasharray:5 4;pointer-events:none}
+
+/* ============ Pan & Zoom tool ============ */
+#board.tool-pan #composite,#board.tool-pan #overlay{pointer-events:none}
+
+/* ============ Mobile: FAB + toolbox colapsável ============ */
+#mobileFab{display:none}
+@media (max-width: 767px){
+  main{grid-template-columns:1fr 1fr}
+  #toolbox{
+    position:fixed;left:12px;bottom:76px;z-index:200;
+    flex-direction:column;gap:4px;padding:8px;border-radius:16px;
+    background:var(--bg1);border:1px solid var(--line2);box-shadow:var(--shadow);
+    transform:translateY(8px) scale(.96);opacity:0;pointer-events:none;transition:.18s;
+    max-height:70vh;overflow-y:auto;
+  }
+  body.menu-open #toolbox{transform:none;opacity:1;pointer-events:auto}
+  #toolbox .tool,#toolbox #btnClearAll{width:46px;height:46px}
+  #mobileFab{
+    display:flex;align-items:center;justify-content:center;
+    position:fixed;left:12px;bottom:12px;z-index:210;
+    width:56px;height:56px;border-radius:16px;color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    box-shadow:var(--shadow);border:none;
+  }
+  #mobileFab svg{width:26px;height:26px;fill:currentColor}
+  #mobileFab:active{transform:scale(.94)}
+  main{grid-template-columns:1fr;grid-template-rows:1fr 44vh}
+  #panel{grid-column:1;border-left:none;border-top:1px solid var(--line)}
+  #workspace{padding:16px}
+  header{gap:6px;padding:0 8px;overflow-x:auto}
+  header .logo em,header #mirrorLbl{display:none}
+  .toast-wrap{top:auto;bottom:78px}
+}

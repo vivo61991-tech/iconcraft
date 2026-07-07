@@ -24,7 +24,7 @@ const state = {
   zoom: 1,
   mirror: 'off',       // 'off' | 'v' | 'h'
   shapeKind: 'rect',
-  bucket: { color:'#5ac8fa', tolerance:60 },
+  bucket: { color:'#5ac8fa', tolerance:60, opacity:100 },
   ref: { src:null, x:0, y:0, scale:1, opacity:40, visible:true }
 };
 let undoStack=[], redoStack=[];
@@ -193,15 +193,10 @@ function paintStroke(c, it, uniform){
   }
   c.restore();
 }
-function compose(){
-  const cv=$('composite'), ctx=cv.getContext('2d');
-  const k=RES/state.size;
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,RES,RES);
-  ctx.setTransform(k,0,0,k,0,0);
-  ctx.lineJoin='round';
+let refCv=null, fillCv=null;
+function drawAllStrokes(ctx,k){
   for(const it of state.items){
-    if(it.kind==='fill'){ floodFillOp(ctx,it,k); continue; }
+    if(it.kind!=='stroke') continue;
     if(!it.pts || it.pts.length<2) continue;
     if(!it.erase && it.opacity<100){
       // opacidade uniforme: desenha opaco num canvas auxiliar
@@ -221,23 +216,52 @@ function compose(){
     }
   }
 }
-/* balde: flood fill por varredura, tolerância p/ bordas suavizadas */
-function floodFillOp(ctx,op,k){
-  const W=RES,H=RES;
+function compose(){
+  const cv=$('composite'), ctx=cv.getContext('2d');
+  const k=RES/state.size;
+  const fills=state.items.filter(i=>i.kind==='fill');
+  let fillReady=false;
+  if(fills.length){
+    // passo 1: só os traços, como referência das bordas das regiões
+    if(!refCv) refCv=document.createElement('canvas');
+    refCv.width=RES; refCv.height=RES;
+    const rctx=refCv.getContext('2d');
+    rctx.setTransform(k,0,0,k,0,0);
+    rctx.lineJoin='round';
+    drawAllStrokes(rctx,k);
+    // passo 2: camada de preenchimentos (fundo das regiões)
+    const refD=rctx.getImageData(0,0,RES,RES).data;
+    const lay=new ImageData(RES,RES);
+    for(const f of fills) floodIntoLayer(refD, lay.data, f, k);
+    if(!fillCv) fillCv=document.createElement('canvas');
+    fillCv.width=RES; fillCv.height=RES;
+    fillCv.getContext('2d').putImageData(lay,0,0);
+    fillReady=true;
+  }
+  // passo 3: composição final — fundo primeiro, traços por cima
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,RES,RES);
+  if(fillReady) ctx.drawImage(fillCv,0,0);
+  ctx.setTransform(k,0,0,k,0,0);
+  ctx.lineJoin='round';
+  drawAllStrokes(ctx,k);
+}
+/* balde: calcula a região limitada pelos traços e pinta na CAMADA DE FUNDO */
+function floodIntoLayer(refD, layD, op, k){
+  const W=RES, H=RES;
   const px=Math.round(op.x*k), py=Math.round(op.y*k);
   if(px<0||py<0||px>=W||py>=H) return;
-  const img=ctx.getImageData(0,0,W,H), d=img.data;
   const idx=(py*W+px)*4;
-  const t=[d[idx],d[idx+1],d[idx+2],d[idx+3]];
+  const t=[refD[idx],refD[idx+1],refD[idx+2],refD[idx+3]];
   const [nr,ng,nb]=hexToRgb(op.color);
   const na=Math.round(255*(op.opacity!=null?op.opacity:100)/100);
-  if(Math.abs(t[0]-nr)+Math.abs(t[1]-ng)+Math.abs(t[2]-nb)+Math.abs(t[3]-na)<8) return;
   const tol=(state.bucket.tolerance||60);
   const match=i=>{
-    const dr=d[i]-t[0],dg=d[i+1]-t[1],db=d[i+2]-t[2],da=d[i+3]-t[3];
+    const dr=refD[i]-t[0], dg=refD[i+1]-t[1], db=refD[i+2]-t[2], da=refD[i+3]-t[3];
     return dr*dr+dg*dg+db*db+da*da <= tol*tol;
   };
   const seen=new Uint8Array(W*H);
+  const paint=i=>{ layD[i*4]=nr; layD[i*4+1]=ng; layD[i*4+2]=nb; layD[i*4+3]=na; };
   const stack=[[px,py]];
   while(stack.length){
     let [x,y]=stack.pop();
@@ -246,14 +270,14 @@ function floodFillOp(ctx,op,k){
     x++; i++;
     let up=false, dn=false;
     while(x<W && match(i*4) && !seen[i]){
-      seen[i]=1;
-      d[i*4]=nr; d[i*4+1]=ng; d[i*4+2]=nb; d[i*4+3]=na;
+      seen[i]=1; paint(i);
       if(y>0){ const j=i-W; if(!seen[j]&&match(j*4)){ if(!up){stack.push([x,y-1]);up=true;} } else up=false; }
       if(y<H-1){ const j=i+W; if(!seen[j]&&match(j*4)){ if(!dn){stack.push([x,y+1]);dn=true;} } else dn=false; }
       x++; i++;
     }
   }
-  // dilata 2px para cobrir a borda anti-serrilhada e eliminar a fissura clara
+  // dilata 2px: como a camada fica POR BAIXO dos traços, isso só
+  // cola o fundo na borda — nunca cobre nada visível
   for(let g=0; g<2; g++){
     const add=[];
     for(let y=0;y<H;y++){
@@ -264,14 +288,8 @@ function floodFillOp(ctx,op,k){
         if((x>0&&seen[i-1])||(x<W-1&&seen[i+1])||(y>0&&seen[i-W])||(y<H-1&&seen[i+W])) add.push(i);
       }
     }
-    for(const i of add){
-      seen[i]=1;
-      d[i*4]=nr; d[i*4+1]=ng; d[i*4+2]=nb; d[i*4+3]=na;
-    }
+    for(const i of add){ seen[i]=1; paint(i); }
   }
-  ctx.save(); ctx.setTransform(1,0,0,1,0,0);
-  ctx.putImageData(img,0,0);
-  ctx.restore();
 }
 /* ============================================================
    ALGORITMOS — suavização, simplificação, cantos, simetria
@@ -634,6 +652,7 @@ function newStrokeItem(pts, erase){
 function attachDrawEvents(){
   const board=$('board');
   board.addEventListener('pointerdown',e=>{
+    if(state.tool==='pan'){ panPointerDown(e); return; }
     if(state.tool==='ref' && e.target.id==='refImg'){ startRefDrag(e); return; }
     const t=state.tool;
     if(t==='bucket'){ doBucket(e); return; }
@@ -839,11 +858,11 @@ function doBucket(e){
   const p=boardPoint(e);
   pushUndo();
   state.items.push({id:state.nextId++, kind:'fill', x:+p.x.toFixed(1), y:+p.y.toFixed(1),
-    color:state.bucket.color, opacity:100});
+    color:state.bucket.color, opacity:(state.bucket.opacity!=null?state.bucket.opacity:100)});
   if(state.mirror!=='off'){
     const m=mirrorPoint(p);
     state.items.push({id:state.nextId++, kind:'fill', x:+m.x.toFixed(1), y:+m.y.toFixed(1),
-      color:state.bucket.color, opacity:100});
+      color:state.bucket.color, opacity:(state.bucket.opacity!=null?state.bucket.opacity:100)});
   }
   compose(); renderPanel(); autosave();
 }
@@ -1266,12 +1285,31 @@ function setTool(t){
   state.tool=t;
   document.querySelectorAll('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   $('board').classList.toggle('tool-ref', t==='ref');
-  const cur={draw:'crosshair',erase:'crosshair',shape:'crosshair',bucket:'cell',select:'default',nodes:'default',ref:'move'};
+  const cur={draw:'crosshair',erase:'crosshair',shape:'crosshair',bucket:'cell',select:'default',nodes:'default',ref:'move',pan:'grab'};
   $('board').style.cursor=cur[t]||'default';
   if(t==='ref' && !state.ref.src) toast('Carregue uma imagem de referência no painel à direita.');
+  updateFab();
+  if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
 }
+let mobileMenuOpen=false;
+function updateFab(){
+  const cur=document.querySelector('.tool[data-tool].on');
+  const fab=$('mobileFab');
+  if(fab && cur && !mobileMenuOpen) fab.innerHTML=cur.querySelector('svg').outerHTML;
+}
+function openMobileMenu(){
+  mobileMenuOpen=true;
+  document.body.classList.add('menu-open');
+  $('mobileFab').innerHTML='<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+}
+function closeMobileMenu(){
+  mobileMenuOpen=false;
+  document.body.classList.remove('menu-open');
+  updateFab();
+}
 document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+$('mobileFab').onclick=()=>{ mobileMenuOpen ? closeMobileMenu() : openMobileMenu(); };
 $('btnClearAll').onclick=()=>{
   if(!state.items.length) return;
   if(!confirm('Limpar todos os traços e preenchimentos?')) return;
@@ -1457,6 +1495,16 @@ function bindRange(id,fn,suffix){
   const r=$(id); if(!r) return;
   r.oninput=()=>{ $(id+'v').textContent=r.value+(suffix||''); fn(parseFloat(r.value)); };
 }
+function reorderPanelForTool(){
+  const P=$('panel');
+  // palavra-chave do título de cada ferramenta -> sobe a seção ao topo
+  const map={bucket:'Balde', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas'};
+  const key=map[state.tool];
+  if(!key) return;
+  const secs=[...P.querySelectorAll('.sec')];
+  const target=secs.find(s=>{ const h=s.querySelector('h3'); return h && h.textContent.trim().startsWith(key); });
+  if(target && target!==P.firstElementChild) P.insertBefore(target, P.firstElementChild);
+}
 function renderPanel(){
   const P=$('panel');
   const it=selItem();
@@ -1543,12 +1591,22 @@ function renderPanel(){
   const fills=state.items.filter(i=>i.kind==='fill');
   html+='<div class="sec"><h3>Balde de tinta <span class="tag">'+fills.length+'</span></h3>'+
     colorField('bkColor',state.bucket.color)+
+    '<div class="row"><label class="lbl">Opacidade</label>'+
+      '<input type="range" id="bkOp" min="5" max="100" value="'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'"><span class="range-val" id="bkOpv">'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'</span></div>'+
     '<div class="row"><label class="lbl">Tolerância</label>'+
       '<input type="range" id="bkTol" min="8" max="140" value="'+state.bucket.tolerance+'"><span class="range-val" id="bkTolv">'+state.bucket.tolerance+'</span></div>'+
-    '<div id="fillList">'+fills.map(f=>'<div class="fill-item"><span class="fill-swatch" style="background:'+f.color+'"></span>'+
-      '<span class="grow">('+Math.round(f.x)+', '+Math.round(f.y)+')</span>'+
+    '<div id="fillList">'+fills.map((f,ix)=>'<div class="fill-item"><span class="fill-swatch" style="background:'+f.color+';opacity:'+((f.opacity!=null?f.opacity:100)/100)+'"></span>'+
+      '<span class="grow">Preenchimento '+(ix+1)+'</span>'+
+      '<button class="btn sm" data-editfill="'+f.id+'">Editar</button>'+
       '<button class="btn sm danger" data-delfill="'+f.id+'">×</button></div>').join('')+'</div>'+
-    '<div class="hint">Preenchimentos são aplicados na camada pixel (aparecem no PNG; o SVG exporta apenas o vetor).</div>'+
+    (editFillId!=null && fills.some(f=>f.id===editFillId) ? (()=>{
+      const f=fills.find(x=>x.id===editFillId);
+      return '<div style="margin-top:8px;padding-top:10px;border-top:1px solid var(--line)"><div class="cp-label" style="text-transform:uppercase;letter-spacing:.9px;margin-bottom:7px">Editar preenchimento</div>'+
+        colorField('efColor',f.color)+
+        '<div class="row"><label class="lbl">Opacidade</label>'+
+          '<input type="range" id="efOp" min="5" max="100" value="'+(f.opacity!=null?f.opacity:100)+'"><span class="range-val" id="efOpv">'+(f.opacity!=null?f.opacity:100)+'</span></div></div>';
+    })() : '')+
+    '<div class="hint">Clique dentro de uma região fechada para preencher. O preenchimento fica ao fundo — os elementos internos permanecem visíveis por cima.</div>'+
   '</div>';
 
   const r=state.ref;
@@ -1589,6 +1647,7 @@ function renderPanel(){
   P.innerHTML=html;
   bindPanel(it);
   renderProjects();
+  reorderPanelForTool();
 }
 function bindPanel(it){
   const multiSel2 = (state.multi && state.multi.length>1)
@@ -1654,7 +1713,20 @@ function bindPanel(it){
   bindRange('pdW2',v=>{pendingStyle.w2=v;});
   bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v;});
   bindColorField('bkColor', ()=>state.bucket.color, v=>{state.bucket.color=v;});
+  bindRange('bkOp',v=>{state.bucket.opacity=v;});
   bindRange('bkTol',v=>{state.bucket.tolerance=v;});
+  document.querySelectorAll('[data-editfill]').forEach(b=>b.onclick=()=>{
+    const id=parseInt(b.dataset.editfill);
+    editFillId = (editFillId===id) ? null : id;
+    renderPanel();
+  });
+  if(editFillId!=null){
+    const f=state.items.find(x=>x.id===editFillId && x.kind==='fill');
+    if(f){
+      bindColorField('efColor', ()=>f.color, v=>{ pushUndo(); f.color=v; compose(); renderPanel(); autosave(); });
+      bindRange('efOp', v=>{ f.opacity=v; compose(); autosave(); });
+    }
+  }
   document.querySelectorAll('[data-delfill]').forEach(b=>b.onclick=()=>{
     pushUndo();
     state.items=state.items.filter(x=>x.id!==parseInt(b.dataset.delfill));
@@ -1841,7 +1913,7 @@ function importProjectFile(){
   inp.click();
 }
 /* ============ SELETOR DE CORES ============ */
-let lastNudge=0, pickerState=null, eyedropActive=false;
+let lastNudge=0, pickerState=null, eyedropActive=false, editFillId=null;
 const RECENT_KEY='iconcraft-recent-colors';
 function getRecentColors(){ try{ return JSON.parse(localStorage.getItem(RECENT_KEY)||'[]'); }catch(e){ return []; } }
 function addRecentColor(c){
@@ -2050,6 +2122,7 @@ document.addEventListener('keydown',e=>{
   if(k==='s') setTool('select');
   if(k==='n') setTool('nodes');
   if(k==='r') setTool('ref');
+  if(k==='p') setTool('pan');
   if(e.key==='Escape'){ state.selId=null; state.multi=[]; renderUi(); renderPanel(); if(smoothSession) smoothRetarget(); }
   if((state.selId!=null || state.multi.length>1) && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
     const targets = state.multi.length>1
@@ -2091,6 +2164,52 @@ $('board').addEventListener('pointerdown',e=>{
     if(smoothSession) smoothRetarget();
   }
 });
+/* ---------------- Pan/Zoom por toque (ferramenta P) ---------------- */
+const activePointers=new Map();
+let pinch=null;
+function panPointerDown(e){
+  e.preventDefault();
+  const board=$('board'); board.setPointerCapture(e.pointerId);
+  activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  const wsE=$('workspace');
+  if(activePointers.size===1){
+    board.style.cursor='grabbing';
+    board._panStart={x:e.clientX,y:e.clientY,sl:wsE.scrollLeft,st:wsE.scrollTop};
+  } else if(activePointers.size===2){
+    const pts=[...activePointers.values()];
+    pinch={d:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y), zoom:state.zoom,
+      cx:(pts[0].x+pts[1].x)/2, cy:(pts[0].y+pts[1].y)/2};
+  }
+}
+function panPointerMove(e){
+  if(!activePointers.has(e.pointerId)) return;
+  activePointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  const wsE=$('workspace'), board=$('board');
+  if(activePointers.size>=2 && pinch){
+    const pts=[...activePointers.values()];
+    const d=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+    const nz=Math.max(0.5,Math.min(2.5, pinch.zoom*(d/pinch.d)));
+    const rect=board.getBoundingClientRect();
+    const px=pinch.cx-rect.left, py=pinch.cy-rect.top;
+    const k=nz/state.zoom;
+    state.zoom=nz; applyBoardSize(); applyRef();
+    wsE.scrollLeft += px*(k-1); wsE.scrollTop += py*(k-1);
+    const z=$('cvZoom'); if(z){ z.value=Math.round(nz*100); const zv=$('cvZoomv'); if(zv) zv.textContent=Math.round(nz*100)+'%'; }
+  } else if(activePointers.size===1 && board._panStart){
+    const s=board._panStart;
+    wsE.scrollLeft = s.sl-(e.clientX-s.x);
+    wsE.scrollTop  = s.st-(e.clientY-s.y);
+  }
+}
+function panPointerUp(e){
+  activePointers.delete(e.pointerId);
+  if(activePointers.size<2) pinch=null;
+  if(activePointers.size===0){ $('board').style.cursor='grab'; $('board')._panStart=null; }
+}
+document.addEventListener('pointermove',panPointerMove);
+document.addEventListener('pointerup',panPointerUp);
+document.addEventListener('pointercancel',panPointerUp);
+
 /* ---------------- Zoom com scroll e pan ---------------- */
 const ws=$('workspace');
 ws.addEventListener('wheel',e=>{
