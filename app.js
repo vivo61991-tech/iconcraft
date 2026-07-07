@@ -846,13 +846,38 @@ function applyShapeInterpretation(){
   toast(conv ? conv+' traço(s) convertido(s) em forma geométrica.' : 'Nenhuma forma reconhecida — traços apenas suavizados.');
 }
 /* --------- espelho ao vivo --------- */
-$('btnMirror').onclick=()=>{
-  state.mirror = state.mirror==='off' ? 'v' : (state.mirror==='v' ? 'h' : 'off');
+function updateMirrorButton(){
+  const on = state.mirror!=='off';
   $('mirrorLbl').textContent = 'Espelho: ' + (state.mirror==='off'?'off':(state.mirror==='v'?'↔ vertical':'↕ horizontal'));
-  $('btnMirror').classList.toggle('primary', state.mirror!=='off');
-  toast(state.mirror==='off' ? 'Espelho ao vivo desligado.' :
-    'Espelho ao vivo: desenhe de um lado e o outro replica em tempo real.');
-};
+  $('btnMirror').classList.toggle('primary', on);
+  const ic=$('mirrorIcon');
+  if(ic) ic.style.transform = state.mirror==='h' ? 'rotate(90deg)' : 'none';
+}
+function setMirror(m){
+  state.mirror=m;
+  updateMirrorButton();
+  toast(m==='off' ? 'Espelho ao vivo desligado.'
+    : 'Espelho ao vivo '+(m==='v'?'vertical':'horizontal')+': desenhe de um lado e o outro replica.');
+}
+function openPopMenu(menu, anchor){
+  closePopMenus();
+  menu.classList.add('open');
+  const r=anchor.getBoundingClientRect();
+  const mw=menu.offsetWidth, mh=menu.offsetHeight;
+  let left=r.left, top=r.bottom+6;
+  if(left+mw>window.innerWidth-8) left=window.innerWidth-mw-8;
+  if(top+mh>window.innerHeight-8) top=Math.max(8, r.top-mh-6);
+  // âncoras na toolbox lateral abrem ao lado
+  if(anchor.closest('#toolbox') && window.innerWidth>=768){ left=r.right+8; top=r.top; if(top+mh>window.innerHeight-8) top=window.innerHeight-mh-8; }
+  menu.style.left=Math.max(8,left)+'px';
+  menu.style.top=top+'px';
+}
+function closePopMenus(){ document.querySelectorAll('.popmenu.open').forEach(m=>m.classList.remove('open')); }
+$('btnMirror').onclick=e=>{ e.stopPropagation(); openPopMenu($('mirrorMenu'), $('btnMirror')); };
+$('mirrorMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{ setMirror(b.dataset.mirror); closePopMenus(); });
+document.addEventListener('pointerdown',e=>{
+  if(!e.target.closest('.popmenu') && !e.target.closest('#btnMirror') && !e.target.closest('#btnSaveTool')) closePopMenus();
+},true);
 /* --------- balde --------- */
 function doBucket(e){
   const p=boardPoint(e);
@@ -874,6 +899,7 @@ function setSelection(ids){
   ids=[...new Set(ids)].filter(id=>state.items.some(i=>i.id===id && i.kind==='stroke'));
   if(ids.length<=1){ state.selId = ids.length ? ids[0] : null; state.multi=[]; }
   else { state.selId=null; state.multi=ids; }
+  if((state.selId!=null || state.multi.length>1) && window.innerWidth<768) openProps();
 }
 function renderHits(){
   gHits.innerHTML='';
@@ -1308,8 +1334,18 @@ function closeMobileMenu(){
   document.body.classList.remove('menu-open');
   updateFab();
 }
+function openProps(){ document.body.classList.add('props-open'); }
+function closeProps(){ document.body.classList.remove('props-open'); }
+function toggleProps(){ document.body.classList.toggle('props-open'); }
 document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('mobileFab').onclick=()=>{ mobileMenuOpen ? closeMobileMenu() : openMobileMenu(); };
+$('mobileProps').onclick=toggleProps;
+$('btnSaveTool').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openPopMenu($('exportMenu'), $('btnSaveTool')); };
+$('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+  closePopMenus();
+  if(b.dataset.export==='svg') $('btnExportSvg').click();
+  else $('btnExportPng').click();
+});
 $('btnClearAll').onclick=()=>{
   if(!state.items.length) return;
   if(!confirm('Limpar todos os traços e preenchimentos?')) return;
@@ -1644,7 +1680,8 @@ function renderPanel(){
     '<div class="hint">Projetos ficam no navegador; o trabalho atual é salvo automaticamente. A imagem de referência não é incluída.</div>'+
   '</div>';
 
-  P.innerHTML=html;
+  P.innerHTML='<button id="panelClose" title="Fechar">✕</button>'+html;
+  const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
   bindPanel(it);
   renderProjects();
   reorderPanelForTool();

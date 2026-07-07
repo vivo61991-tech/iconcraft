@@ -296,32 +296,91 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 /* ============ Pan & Zoom tool ============ */
 #board.tool-pan #composite,#board.tool-pan #overlay{pointer-events:none}
 
-/* ============ Mobile: FAB + toolbox colapsável ============ */
-#mobileFab{display:none}
+/* ============ Menus popover (espelho / exportar) ============ */
+.popmenu{
+  position:fixed;z-index:760;display:none;flex-direction:column;gap:2px;
+  background:var(--bg1);border:1px solid var(--line2);border-radius:12px;
+  padding:6px;box-shadow:var(--shadow);min-width:180px;
+}
+.popmenu.open{display:flex}
+.popmenu button{
+  display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;
+  color:var(--text);font-size:13px;font-weight:600;text-align:left;width:100%;
+}
+.popmenu button:hover{background:var(--accent-soft);color:var(--accent)}
+.popmenu button svg{width:19px;height:19px;fill:currentColor;flex:0 0 auto}
+
+/* botão fechar do painel (só aparece no mobile) */
+#panelClose{display:none}
+
+/* botões flutuantes mobile (escondidos no desktop) */
+#mobileFab,#mobileProps{display:none}
+
+/* ============ Mobile ============ */
 @media (max-width: 767px){
-  main{grid-template-columns:1fr 1fr}
+  body{grid-template-rows:48px 1fr}
+  header{gap:5px;padding:0 8px;overflow-x:auto;overflow-y:hidden}
+  header .logo em{display:none}
+  header .logo{font-size:14px;margin-right:2px}
+  header #mirrorLbl{display:none}
+  header #btnMirror{padding:7px 9px}
+  /* SVG/PNG soltos do topo somem — vão para o disquete na toolbox */
+  header #btnExportSvg,header #btnExportPng{display:none}
+
+  main{grid-template-columns:1fr;grid-template-rows:1fr}
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:300;
+    max-height:74vh;border-left:none;border-top:1px solid var(--line2);
+    border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.4);
+    transform:translateY(102%);transition:transform .24s ease;
+    padding-top:6px;
+  }
+  body.props-open #panel{transform:none}
+  #panelClose{
+    display:flex;align-items:center;justify-content:center;
+    position:sticky;top:0;margin-left:auto;margin-right:8px;
+    width:34px;height:34px;border-radius:9px;background:var(--bg2);
+    border:1px solid var(--line);color:var(--muted);font-size:15px;z-index:5;
+  }
+  #workspace{padding:14px}
+
+  /* toolbox vira menu que sobe do FAB */
   #toolbox{
-    position:fixed;left:12px;bottom:76px;z-index:200;
+    position:fixed;left:12px;bottom:78px;z-index:220;
     flex-direction:column;gap:4px;padding:8px;border-radius:16px;
     background:var(--bg1);border:1px solid var(--line2);box-shadow:var(--shadow);
-    transform:translateY(8px) scale(.96);opacity:0;pointer-events:none;transition:.18s;
-    max-height:70vh;overflow-y:auto;
+    transform:translateY(10px) scale(.95);opacity:0;pointer-events:none;transition:.18s;
+    max-height:72vh;overflow-y:auto;
   }
   body.menu-open #toolbox{transform:none;opacity:1;pointer-events:auto}
-  #toolbox .tool,#toolbox #btnClearAll{width:46px;height:46px}
+  #toolbox .tool,#toolbox #btnClearAll,#toolbox #btnSaveTool,#toolbox #btnSmoothTool{width:46px;height:46px}
+  #toolbox .tool-sep{width:34px}
+
   #mobileFab{
     display:flex;align-items:center;justify-content:center;
-    position:fixed;left:12px;bottom:12px;z-index:210;
+    position:fixed;left:12px;bottom:12px;z-index:230;
     width:56px;height:56px;border-radius:16px;color:#fff;
     background:linear-gradient(135deg,var(--accent),var(--accent2));
     box-shadow:var(--shadow);border:none;
   }
   #mobileFab svg{width:26px;height:26px;fill:currentColor}
   #mobileFab:active{transform:scale(.94)}
-  main{grid-template-columns:1fr;grid-template-rows:1fr 44vh}
-  #panel{grid-column:1;border-left:none;border-top:1px solid var(--line)}
-  #workspace{padding:16px}
-  header{gap:6px;padding:0 8px;overflow-x:auto}
-  header .logo em,header #mirrorLbl{display:none}
-  .toast-wrap{top:auto;bottom:78px}
+
+  #mobileProps{
+    display:flex;align-items:center;justify-content:center;
+    position:fixed;right:12px;bottom:12px;z-index:230;
+    width:52px;height:52px;border-radius:15px;
+    background:var(--bg1);border:1px solid var(--line2);color:var(--text);
+    box-shadow:var(--shadow);
+  }
+  #mobileProps svg{width:23px;height:23px;fill:currentColor}
+  #mobileProps:active{transform:scale(.94)}
+  body.props-open #mobileProps{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+
+  .popmenu{min-width:200px}
+  .toast-wrap{top:auto;bottom:80px}
+
+  /* limpar textos longos que empurram a interface no mobile */
+  #panel .empty{padding:16px 14px;font-size:12px}
+  #panel .hint{display:none}
 }
