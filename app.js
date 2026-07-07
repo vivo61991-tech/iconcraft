@@ -25,6 +25,7 @@ const state = {
   mirror: 'off',       // 'off' | 'v' | 'h'
   shapeKind: 'rect',
   navMode: 'select',   // último modo do FAB de navegação: 'select' | 'pan'
+  lastCreate: 'draw',  // última ferramenta de criação usada (ícone do FAB esquerdo)
   bucket: { color:'#5ac8fa', tolerance:60, opacity:100 },
   ref: { src:null, x:0, y:0, scale:1, opacity:40, visible:true }
 };
@@ -1316,6 +1317,7 @@ function setTool(t){
   $('board').style.cursor=cur[t]||'default';
   if(t==='ref' && !state.ref.src) toast('Carregue uma imagem de referência no painel à direita.');
   if(t==='select' || t==='pan') state.navMode=t;
+  if(CREATE_TOOLS.includes(t)) state.lastCreate=t;
   updateFab();
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
@@ -1333,10 +1335,10 @@ function updateFab(){
   // FAB inferior esquerdo: ferramentas de criação
   const fab=$('mobileFab');
   if(fab && !mobileMenuOpen){
-    const cur=document.querySelector('.tool[data-tool].on');
-    const isCreate = cur && CREATE_TOOLS.includes(cur.dataset.tool);
-    fab.innerHTML = isCreate ? cur.querySelector('svg').outerHTML : (state.navMode==='pan'?ICON_SELECT:ICON_SELECT);
-    fab.classList.toggle('fab-active', !!isCreate);
+    // sempre exibe a última ferramenta de criação; ativa só quando ela é a ferramenta atual
+    const btn=document.querySelector('.tool[data-tool="'+state.lastCreate+'"]');
+    if(btn) fab.innerHTML=btn.querySelector('svg').outerHTML;
+    fab.classList.toggle('fab-active', CREATE_TOOLS.includes(state.tool));
   }
   // FAB superior direito: navegação (selecionar / mover tela)
   const nav=$('mobileNav');
