@@ -317,6 +317,7 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 #mobileFab,#mobileProps{display:none}
 
 /* ============ Mobile ============ */
+#mobileNav{display:none}
 @media (max-width: 767px){
   body{grid-template-rows:48px 1fr}
   header{gap:5px;padding:0 8px;overflow-x:auto;overflow-y:hidden}
@@ -324,76 +325,76 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   header .logo{font-size:14px;margin-right:2px}
   header #mirrorLbl{display:none}
   header #btnMirror{padding:7px 9px}
-  /* SVG/PNG soltos do topo somem — vão para o disquete na toolbox */
   header #btnExportSvg,header #btnExportPng{display:none}
 
   main{grid-template-columns:1fr;grid-template-rows:1fr}
+
+  /* drawer de propriedades / ambiente */
   #panel{
     position:fixed;left:0;right:0;bottom:0;z-index:300;
-    max-height:74vh;border-left:none;border-top:1px solid var(--line2);
-    border-radius:16px 16px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.4);
+    max-height:72vh;border-left:none;border-top:1px solid var(--line2);
+    border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.4);
     transform:translateY(102%);transition:transform .24s ease;
-    padding-top:6px;
+    padding-top:34px;
   }
   body.props-open #panel{transform:none}
+  /* alça central: seta pra baixo que retrai o painel */
   #panelClose{
     display:flex;align-items:center;justify-content:center;
-    position:sticky;top:0;margin-left:auto;margin-right:8px;
-    width:34px;height:34px;border-radius:9px;background:var(--bg2);
-    border:1px solid var(--line);color:var(--muted);font-size:15px;z-index:5;
+    position:absolute;top:4px;left:50%;transform:translateX(-50%);
+    width:64px;height:26px;border-radius:0 0 10px 10px;
+    background:var(--bg2);border:1px solid var(--line);border-top:none;color:var(--muted);
+    z-index:6;
+  }
+  #panelClose svg{width:22px;height:22px;fill:currentColor}
+  #panelClose:active{background:var(--bg3)}
+  /* faixa clicável no topo inteiro do drawer para retrair */
+  #panel::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:34px;z-index:5;
   }
   #workspace{padding:14px}
 
-  /* toolbox vira menu que sobe do FAB */
+  /* toolbox (ferramentas de criação) sobe do FAB inferior esquerdo */
   #toolbox{
     position:fixed;left:12px;bottom:78px;z-index:220;
     flex-direction:column;gap:4px;padding:8px;border-radius:16px;
     background:var(--bg1);border:1px solid var(--line2);box-shadow:var(--shadow);
     transform:translateY(10px) scale(.95);opacity:0;pointer-events:none;transition:.18s;
-    max-height:72vh;overflow-y:auto;
+    max-height:70vh;overflow-y:auto;
   }
   body.menu-open #toolbox{transform:none;opacity:1;pointer-events:auto}
   #toolbox .tool,#toolbox #btnClearAll,#toolbox #btnSaveTool,#toolbox #btnSmoothTool{width:46px;height:46px}
+  /* selecionar, nós e pan não ficam na toolbox no mobile (vão pro FAB nav) */
+  #toolbox [data-tool="select"],#toolbox [data-tool="pan"]{display:none}
   #toolbox .tool-sep{width:34px}
 
-  #mobileFab{
+  /* FAB base */
+  #mobileFab,#mobileNav,#mobileProps{
     display:flex;align-items:center;justify-content:center;
-    position:fixed;left:12px;bottom:12px;z-index:230;
-    width:56px;height:56px;border-radius:16px;color:#fff;
-    background:linear-gradient(135deg,var(--accent),var(--accent2));
-    box-shadow:var(--shadow);border:none;
+    position:fixed;z-index:230;border-radius:16px;box-shadow:var(--shadow);
   }
-  #mobileFab svg{width:26px;height:26px;fill:currentColor}
-  #mobileFab:active{transform:scale(.94)}
+  #mobileFab svg,#mobileNav svg,#mobileProps svg{width:25px;height:25px;fill:currentColor}
+  #mobileFab:active,#mobileNav:active,#mobileProps:active{transform:scale(.94)}
 
-  #mobileProps{
-    display:flex;align-items:center;justify-content:center;
-    position:fixed;right:12px;bottom:12px;z-index:230;
-    width:52px;height:52px;border-radius:15px;
-    background:var(--bg1);border:1px solid var(--line2);color:var(--text);
-    box-shadow:var(--shadow);
-  }
-  #mobileProps svg{width:23px;height:23px;fill:currentColor}
-  #mobileProps:active{transform:scale(.94)}
+  /* inferior esquerdo: ferramentas de criação */
+  #mobileFab{left:12px;bottom:12px;width:56px;height:56px;
+    background:var(--bg1);border:1px solid var(--line2);color:var(--text)}
+  #mobileFab.fab-active{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none}
+
+  /* superior direito: navegação (selecionar / mover) */
+  #mobileNav{right:12px;top:56px;width:52px;height:52px;
+    background:var(--bg1);border:1px solid var(--line2);color:var(--text)}
+  #mobileNav.fab-active{background:var(--accent);color:#fff;border:none}
+
+  /* inferior direito: ambiente (canvas/zoom/projetos) */
+  #mobileProps{right:12px;bottom:12px;width:52px;height:52px;
+    background:var(--bg1);border:1px solid var(--line2);color:var(--text)}
+  #mobileProps svg{width:23px;height:23px}
   body.props-open #mobileProps{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
 
   .popmenu{min-width:200px}
   .toast-wrap{top:auto;bottom:80px}
 
-  /* limpar textos longos que empurram a interface no mobile */
-  #panel .empty{padding:16px 14px;font-size:12px}
+  #panel .empty{padding:14px;font-size:12px}
   #panel .hint{display:none}
 }
-
-/* ============ roda de cores ============ */
-.cp-wheel-wrap{position:relative;width:220px;height:220px;margin:4px auto 8px}
-#cpWheel{width:220px;height:220px;border-radius:50%;cursor:crosshair;touch-action:none;box-shadow:0 0 0 1px var(--line) inset}
-#cpWheelDot{
-  position:absolute;width:14px;height:14px;border-radius:50%;
-  border:2px solid #fff;box-shadow:0 0 0 1.5px rgba(0,0,0,.5),0 1px 4px rgba(0,0,0,.5);
-  transform:translate(-50%,-50%);pointer-events:none;
-}
-#cpVal{width:100%;height:14px;-webkit-appearance:none;appearance:none;border-radius:7px;outline:none;margin:2px 0 6px;
-  background:linear-gradient(to right,#000,#fff);border:1px solid var(--line)}
-#cpVal::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:2px solid #666;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer}
-#cpVal::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid #666;cursor:pointer}

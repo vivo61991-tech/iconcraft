@@ -24,6 +24,7 @@ const state = {
   zoom: 1,
   mirror: 'off',       // 'off' | 'v' | 'h'
   shapeKind: 'rect',
+  navMode: 'select',   // último modo do FAB de navegação: 'select' | 'pan'
   bucket: { color:'#5ac8fa', tolerance:60, opacity:100 },
   ref: { src:null, x:0, y:0, scale:1, opacity:40, visible:true }
 };
@@ -1314,19 +1315,36 @@ function setTool(t){
   const cur={draw:'crosshair',erase:'crosshair',shape:'crosshair',bucket:'cell',select:'default',nodes:'default',ref:'move',pan:'grab'};
   $('board').style.cursor=cur[t]||'default';
   if(t==='ref' && !state.ref.src) toast('Carregue uma imagem de referência no painel à direita.');
+  if(t==='select' || t==='pan') state.navMode=t;
   updateFab();
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
   if(window.innerWidth<768){
     const hasProps=['draw','erase','shape','bucket'].includes(t);
     if(hasProps) openProps('props');
+    else if(t==='pan') closeProps();
   }
 }
 let mobileMenuOpen=false;
+const ICON_SELECT='<svg viewBox="0 0 24 24"><path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2 1-3.2-7.4L7 18.5z"/></svg>';
+const ICON_PAN='<svg viewBox="0 0 24 24"><path d="M13 6v5h5V7.75L22.25 12 18 16.25V13h-5v5h3.25L12 22.25 7.75 18H11v-5H6v3.25L1.75 12 6 7.75V11h5V6H7.75L12 1.75 16.25 6z"/></svg>';
+const CREATE_TOOLS=['draw','erase','shape','bucket','nodes','ref'];
 function updateFab(){
-  const cur=document.querySelector('.tool[data-tool].on');
+  // FAB inferior esquerdo: ferramentas de criação
   const fab=$('mobileFab');
-  if(fab && cur && !mobileMenuOpen) fab.innerHTML=cur.querySelector('svg').outerHTML;
+  if(fab && !mobileMenuOpen){
+    const cur=document.querySelector('.tool[data-tool].on');
+    const isCreate = cur && CREATE_TOOLS.includes(cur.dataset.tool);
+    fab.innerHTML = isCreate ? cur.querySelector('svg').outerHTML : (state.navMode==='pan'?ICON_SELECT:ICON_SELECT);
+    fab.classList.toggle('fab-active', !!isCreate);
+  }
+  // FAB superior direito: navegação (selecionar / mover tela)
+  const nav=$('mobileNav');
+  if(nav){
+    const navActive = (state.tool==='select' || state.tool==='pan');
+    nav.innerHTML = state.tool==='pan' ? ICON_PAN : ICON_SELECT;
+    nav.classList.toggle('fab-active', navActive);
+  }
 }
 function openMobileMenu(){
   mobileMenuOpen=true;
@@ -1366,6 +1384,14 @@ function toggleEnv(){
 }
 document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 $('mobileFab').onclick=()=>{ mobileMenuOpen ? closeMobileMenu() : openMobileMenu(); };
+$('mobileNav').onclick=()=>{
+  if(mobileMenuOpen) closeMobileMenu();
+  // 1º toque ativa o modo guardado; 2º toque (já ativo) alterna select<->pan
+  if(state.tool==='select' || state.tool==='pan'){
+    state.navMode = state.tool==='select' ? 'pan' : 'select';
+  }
+  setTool(state.navMode);
+};
 $('mobileProps').onclick=toggleEnv;
 $('btnSaveTool').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openPopMenu($('exportMenu'), $('btnSaveTool')); };
 $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
@@ -1630,7 +1656,7 @@ function renderPanel(){
       '</div>';
     }
   } else {
-    html+='<div class="empty">Desenhe à mão livre, rascunhe uma <b>forma geométrica</b>, use o <b>balde</b> para preencher regiões ou o <b>pincel negativo</b> para recortar transparência.</div>';
+    html+='';
   }
 
   if(state.tool==='shape'){
@@ -1708,7 +1734,7 @@ function renderPanel(){
     '<div class="hint">Projetos ficam no navegador; o trabalho atual é salvo automaticamente. A imagem de referência não é incluída.</div>'+
   '</div>';
 
-  P.innerHTML='<button id="panelClose" title="Fechar">✕</button>'+html;
+  P.innerHTML='<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>'+html;
   const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
   bindPanel(it);
   renderProjects();
