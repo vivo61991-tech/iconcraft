@@ -575,3 +575,11 @@ body.eyedrop-capturing #workspace{touch-action:none}
   #eyedropActions .btn{flex:1;min-width:0}
   #eyedropTag{font-size:11px}
 }
+
+/* ============ painel compacto no modo suavizar (deixa o canvas visível) ============ */
+@media (max-width:767px){
+  body.tool-smooth.props-open #panel{
+    max-height:210px;   /* só o slider + botões + dica */
+  }
+}
+/* desktop: painel lateral não cobre o canvas, então não precisa mudar */

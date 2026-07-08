@@ -951,7 +951,7 @@ function renderHits(){
     hit.setAttribute('fill', it.closed ? 'rgba(0,0,0,0)' : 'none');
     hit.setAttribute('stroke','transparent');
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
-    const noHit=['draw','erase','shape','pan','select'].includes(state.tool);
+    const noHit=['draw','erase','shape','pan','select','smooth'].includes(state.tool);
     hit.style.cursor = noHit ? 'inherit' : 'pointer';
     // select é resolvido pelo board (objectAtPoint); aqui capturamos só p/ nodes etc.
     hit.style.pointerEvents = noHit ? 'none' : (it.closed ? 'all' : 'stroke');
@@ -1410,6 +1410,7 @@ function setTool(t, fromList){
   // classe genérica com a ferramenta atual (para CSS de cursor/pointer-events)
   bd.className=bd.className.replace(/\btoolmode-\w+/g,'').trim();
   bd.classList.add('toolmode-'+t);
+  document.body.classList.toggle('tool-smooth', t==='smooth');
   const cur={bucket:'cell',select:'default',nodes:'default',ref:'move',pan:'grab'};
   if(['draw','erase','shape'].includes(t)) setBoardCursor(buildBrushCursor());
   else setBoardCursor(cur[t]||'default');
@@ -2645,6 +2646,27 @@ $('board').addEventListener('pointerup',e=>{
   edTap.pt=null;
 }, true);
 $('board').addEventListener('pointercancel',e=>{ if(eyedropActive){ panPointerUp(e); edTap.pt=null; } }, true);
+/* gestos no modo suavizar: arrastar 1 dedo = pan, pinça = zoom, toque = isolar traço */
+let smTap=null;
+$('board').addEventListener('pointermove',e=>{
+  if(state.tool!=='smooth' || !smTap) return;
+  if(smTap.pt.id===e.pointerId){
+    if(Math.abs(e.clientX-smTap.pt.x)>6 || Math.abs(e.clientY-smTap.pt.y)>6) smTap.moved=true;
+  }
+  panPointerMove(e);
+}, true);
+$('board').addEventListener('pointerup',e=>{
+  if(state.tool!=='smooth' || !smTap) return;
+  const wasTap = smTap.pt.id===e.pointerId && !smTap.moved && activePointers.size<=1;
+  const hit=smTap.hit;
+  panPointerUp(e);
+  if(wasTap && hit){
+    setSelection([hit.id]); renderUi();
+    if(smoothSession) smoothRetarget(); else renderPanel();
+  }
+  smTap=null;
+}, true);
+$('board').addEventListener('pointercancel',e=>{ if(state.tool==='smooth'&&smTap){ panPointerUp(e); smTap=null; } }, true);
 $('eyedropApply').onclick=()=>endEyedropCapture(true);
 $('eyedropCancel').onclick=()=>endEyedropCapture(false);
 /* fecha ao clicar fora */
@@ -2773,31 +2795,34 @@ function objectAtPoint(p){
 }
 /* seleção/deseleção robusta por toque ou clique */
 $('board').addEventListener('pointerdown',e=>{
-  if(state.tool!=='select') return;
+  if(state.tool!=='select' && state.tool!=='smooth') return;
   if(e.button!==undefined && e.button!==0) return;
-  // ignora se o gesto começou sobre uma alça de transformação/nó
   if(e.target.closest && e.target.closest('.thandle,.node')) return;
 
   const startP=boardPoint(e);
   const hit=objectAtPoint(startP);
+
+  // MODO SUAVIZAR: toque isola o traço; arraste m=pan; pinça=zoom (ferramenta segue ativa)
+  if(state.tool==='smooth'){
+    smTap={pt:{x:e.clientX,y:e.clientY,id:e.pointerId}, moved:false, hit:hit};
+    panPointerDown(e);
+    return;
+  }
+
   if(hit){
-    // toque sobre um objeto: seleciona já e permite arrastar
     if(e.shiftKey){
       const base = state.multi.length ? state.multi.slice() : (state.selId!=null ? [state.selId] : []);
       const at=base.indexOf(hit.id);
       if(at>=0) base.splice(at,1); else base.push(hit.id);
       setSelection(base); renderUi(); renderPanel();
-      if(smoothSession) smoothRetarget();
       return;
     }
     if(state.multi.length>1 && state.multi.includes(hit.id)){ startGroupMove(e); return; }
     setSelection([hit.id]);
     renderUi(); renderPanel();
-    if(smoothSession){ smoothRetarget(); return; }
     startMoveDrag(hit, e);
     return;
   }
-  // vazio: arrasto vira marquee; toque simples desmarca (no pointerup)
   e.preventDefault();
   startMarquee(e);
 });
