@@ -1422,7 +1422,7 @@ function setTool(t){
   if(window.innerWidth<768){
     const hasProps=['draw','erase','shape','bucket','layers','smooth'].includes(t);
     if(hasProps) openProps('props');
-    else if(t==='pan') closeProps();
+    else if(t==='pan' || t==='select') closeProps();
   }
 }
 let mobileMenuOpen=false;

@@ -323,10 +323,10 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 
   /* drawer de propriedades / ambiente */
   #panel{
-    position:fixed;left:0;right:0;bottom:0;z-index:300;
-    max-height:72vh;border-left:none;border-top:1px solid var(--line2);
+    position:fixed;left:0;right:0;bottom:76px;z-index:300;
+    max-height:64vh;border-left:none;border-top:1px solid var(--line2);
     border-radius:18px 18px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.4);
-    transform:translateY(102%);transition:transform .24s ease;
+    transform:translateY(120%);transition:transform .24s ease;
     padding-top:34px;
   }
   body.props-open #panel{transform:none}
@@ -396,7 +396,7 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 @media (max-width: 767px){
   #panelReopen{
     display:flex;align-items:center;justify-content:center;
-    position:fixed;left:50%;bottom:0;transform:translateX(-50%);z-index:215;
+    position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:215;
     width:64px;height:26px;border-radius:10px 10px 0 0;
     background:var(--bg2);border:1px solid var(--line);border-bottom:none;color:var(--muted);
     box-shadow:0 -4px 14px rgba(0,0,0,.25);transition:opacity .18s;
