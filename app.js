@@ -1420,9 +1420,9 @@ function setTool(t){
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
   if(window.innerWidth<768){
-    const hasProps=['draw','erase','shape','bucket','layers','smooth'].includes(t);
-    if(hasProps) openProps('props');
-    else if(t==='pan' || t==='select') closeProps();
+    // ativar qualquer ferramenta apenas ativa — não abre o painel.
+    // o painel de propriedades só abre quando o usuário toca na aba/seta.
+    closeProps();
   }
 }
 let mobileMenuOpen=false;
