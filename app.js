@@ -1394,7 +1394,7 @@ function setBoardCursor(css){
 function refreshBrushCursor(){
   if(['draw','erase','shape'].includes(state.tool)) setBoardCursor(buildBrushCursor());
 }
-function setTool(t){
+function setTool(t, fromList){
   // sair da ferramenta de suavização confirma o que estiver aplicado
   if(state.tool==='smooth' && t!=='smooth') endSmoothSession(true);
   const prev=state.tool;
@@ -1420,9 +1420,11 @@ function setTool(t){
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
   if(window.innerWidth<768){
-    // ativar qualquer ferramenta apenas ativa — não abre o painel.
-    // o painel de propriedades só abre quando o usuário toca na aba/seta.
-    closeProps();
+    // FAB/atalho: apenas ativa (não abre painel). Somente selecionar na lista
+    // da esquerda abre as opções da ferramenta.
+    const hasProps=['draw','erase','shape','bucket','layers','smooth'].includes(t);
+    if(fromList && hasProps) openProps('props');
+    else closeProps();
   }
 }
 let mobileMenuOpen=false;
@@ -1483,7 +1485,7 @@ function toggleEnv(){
   if(document.body.classList.contains('props-open') && panelMode==='env') closeProps();
   else openProps('env');
 }
-document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool, true));
 $('mobileFab').onclick=()=>{
   if(mobileMenuOpen){ closeMobileMenu(); return; }
   // se a ferramenta de criação está inativa, o 1º toque apenas a ativa;
