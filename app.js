@@ -951,10 +951,10 @@ function renderHits(){
     hit.setAttribute('fill', it.closed ? 'rgba(0,0,0,0)' : 'none');
     hit.setAttribute('stroke','transparent');
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
-    const drawMode=['draw','erase','shape','pan'].includes(state.tool);
-    hit.style.cursor = drawMode ? 'inherit' : 'pointer';
-    // fechado: toda a área interna clicável (corpo é um só). aberto: só a linha.
-    hit.style.pointerEvents = drawMode ? 'none' : (it.closed ? 'all' : 'stroke');
+    const noHit=['draw','erase','shape','pan','select'].includes(state.tool);
+    hit.style.cursor = noHit ? 'inherit' : 'pointer';
+    // select é resolvido pelo board (objectAtPoint); aqui capturamos só p/ nodes etc.
+    hit.style.pointerEvents = noHit ? 'none' : (it.closed ? 'all' : 'stroke');
     hit.addEventListener('pointerdown',e=>{
       if(state.tool==='draw'||state.tool==='erase'||state.tool==='shape'||state.tool==='bucket'||state.tool==='ref') return;
       e.stopPropagation();
@@ -988,6 +988,7 @@ function renderHits(){
   if(typeof refreshBrushCursor==='function') refreshBrushCursor();
 }
 function renderUi(){
+  updateOrderFabs();
   gUi.innerHTML='';
   if(state.multi && state.multi.length>1){
     const members=state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id));
@@ -2641,17 +2642,80 @@ document.addEventListener('keydown',e=>{
     compose(); renderHits(); renderPanel(); autosave();
   }
 });
-/* deseleciona clicando no vazio */
+function selectedSingleId(){
+  if(state.selId!=null) return state.selId;
+  if(state.multi.length===1) return state.multi[0];
+  return null;
+}
+function updateOrderFabs(){
+  const box=$('orderFabs'); if(!box) return;
+  const id=selectedSingleId();
+  const it = id!=null ? state.items.find(i=>i.id===id) : null;
+  if(!it || it.kind!=='stroke' || !it.pts || state.tool!=='select'){
+    box.classList.remove('show'); return;
+  }
+  box.classList.add('show');
+  // posiciona logo abaixo do centro-inferior da forma, em coords de tela
+  const bb=ptsBBox(it.pts);
+  const r=overlay.getBoundingClientRect();
+  const sx = r.left + (bb.cx/state.size)*r.width;
+  const sy = r.top  + (bb.y1/state.size)*r.height;
+  box.style.left = sx+'px';
+  box.style.top  = (sy+12)+'px';
+  box.style.bottom='auto';
+  box.style.transform='translateX(-50%)';
+}
+$('orderUp').onclick=()=>{ const id=selectedSingleId(); if(id!=null) moveLayer(id,+1); };
+$('orderDown').onclick=()=>{ const id=selectedSingleId(); if(id!=null) moveLayer(id,-1); };
+/* hit-test central: objeto mais acima sob o ponto do board */
+function objectAtPoint(p){
+  const cv=$('composite'); const k=RES/state.size; const ctx=cv.getContext('2d');
+  for(let i=state.items.length-1;i>=0;i--){
+    const it=state.items[i];
+    if(it.kind!=='stroke' || !it.pts || it.pts.length<2) continue;
+    const path=itemPath2D(it);
+    ctx.save(); ctx.setTransform(k,0,0,k,0,0);
+    let hit=false;
+    if(it.closed){ hit=ctx.isPointInPath(path, p.x*k, p.y*k); }
+    if(!hit){
+      // proximidade da linha (traços abertos ou borda)
+      ctx.lineWidth=Math.max(14, it.w+10);
+      hit=ctx.isPointInStroke(path, p.x*k, p.y*k);
+    }
+    ctx.restore();
+    if(hit) return it;
+  }
+  return null;
+}
+/* seleção/deseleção robusta por toque ou clique */
 $('board').addEventListener('pointerdown',e=>{
-  if((state.tool==='select'||state.tool==='nodes') && (e.target===overlay||e.target.id==='composite')){
-    if(state.tool==='select' && (e.button===undefined || e.button===0)){
-      e.preventDefault();
-      startMarquee(e);
+  if(state.tool!=='select') return;
+  if(e.button!==undefined && e.button!==0) return;
+  // ignora se o gesto começou sobre uma alça de transformação/nó
+  if(e.target.closest && e.target.closest('.thandle,.node')) return;
+
+  const startP=boardPoint(e);
+  const hit=objectAtPoint(startP);
+  if(hit){
+    // toque sobre um objeto: seleciona já e permite arrastar
+    if(e.shiftKey){
+      const base = state.multi.length ? state.multi.slice() : (state.selId!=null ? [state.selId] : []);
+      const at=base.indexOf(hit.id);
+      if(at>=0) base.splice(at,1); else base.push(hit.id);
+      setSelection(base); renderUi(); renderPanel();
+      if(smoothSession) smoothRetarget();
       return;
     }
-    state.selId=null; state.multi=[]; renderUi(); renderPanel();
-    if(smoothSession) smoothRetarget();
+    if(state.multi.length>1 && state.multi.includes(hit.id)){ startGroupMove(e); return; }
+    setSelection([hit.id]);
+    renderUi(); renderPanel();
+    if(smoothSession){ smoothRetarget(); return; }
+    startMoveDrag(hit, e);
+    return;
   }
+  // vazio: arrasto vira marquee; toque simples desmarca (no pointerup)
+  e.preventDefault();
+  startMarquee(e);
 });
 function setZoom(z){
   state.zoom=Math.max(0.25,Math.min(3,z));

@@ -197,7 +197,7 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   position:absolute;left:0;top:0;transform-origin:0 0;
   pointer-events:none;display:none;user-select:none;
 }
-#composite{position:absolute;left:0;top:0;width:100%;height:100%}
+#composite{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:auto}
 #overlay{position:absolute;left:0;top:0;width:100%;height:100%}
 #board.tool-ref #refImg{pointer-events:auto;cursor:move;outline:2px dashed var(--accent);outline-offset:-2px}
 .node{
@@ -499,3 +499,23 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 /* escala reto↔redondo dentro do painel */
 .sm-scale{display:flex;align-items:center;gap:9px;margin:2px 0 2px}
 .sm-scale input[type=range]{flex:1}
+
+/* ============ botões pequenos de ordenação (modo seleção) ============ */
+#orderFabs{
+  position:fixed;display:none;gap:10px;z-index:225;opacity:0;
+  transition:opacity .16s;transform:translateX(-50%);
+}
+#orderFabs.show{display:flex;opacity:1}
+#orderFabs button{
+  width:34px;height:34px;border-radius:50%;font-size:11px;padding:0;
+  background:var(--bg1);border:1px solid var(--line2);color:var(--text);
+  box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
+}
+#orderFabs button:hover{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+#orderFabs button:active{transform:scale(.9)}
+
+/* modo seleção: o canvas do desenho capta o toque; alças e nós continuam ativos */
+#board.toolmode-select #overlay{pointer-events:none}
+#board.toolmode-select #overlay .thandle,
+#board.toolmode-select #overlay .node{pointer-events:auto}
+#board.toolmode-select #composite{pointer-events:auto}
