@@ -887,7 +887,7 @@ function closePopMenus(){ document.querySelectorAll('.popmenu.open').forEach(m=>
 $('btnMirror').onclick=e=>{ e.stopPropagation(); openPopMenu($('mirrorMenu'), $('btnMirror')); };
 $('mirrorMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{ setMirror(b.dataset.mirror); closePopMenus(); });
 document.addEventListener('pointerdown',e=>{
-  if(!e.target.closest('.popmenu') && !e.target.closest('#btnMirror') && !e.target.closest('#btnSaveTool')) closePopMenus();
+  if(!e.target.closest('.popmenu') && !e.target.closest('#btnMirror') && !e.target.closest('#btnSaveTool') && !e.target.closest('#btnClearAll')) closePopMenus();
 },true);
 /* --------- balde --------- */
 function fillObjectAt(p, color, op){
@@ -1598,12 +1598,37 @@ $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
   if(b.dataset.export==='svg') $('btnExportSvg').click();
   else $('btnExportPng').click();
 });
-$('btnClearAll').onclick=()=>{
+function deleteSelected(){
+  const ids = state.multi.length ? state.multi.slice() : (state.selId!=null ? [state.selId] : []);
+  if(!ids.length) return;
+  pushUndo();
+  state.items=state.items.filter(x=>!ids.includes(x.id));
+  state.selId=null; state.multi=[];
+  compose(); renderHits(); renderUi(); renderPanel(); autosave();
+}
+function clearAll(){
   if(!state.items.length) return;
-  if(!confirm('Limpar todos os traços e preenchimentos?')) return;
-  pushUndo(); state.items=[]; state.selId=null;
-  compose(); renderHits(); renderPanel(); autosave();
+  pushUndo(); state.items=[]; state.selId=null; state.multi=[];
+  compose(); renderHits(); renderUi(); renderPanel(); autosave();
+}
+$('btnClearAll').onclick=e=>{
+  e.stopPropagation();
+  if(mobileMenuOpen) closeMobileMenu();
+  if(!state.items.length){ toast('Não há nada para excluir.'); return; }
+  const hasSel = state.multi.length>0 || state.selId!=null;
+  const menu=$('clearMenu');
+  // mostra "Excluir selecionados" só quando há seleção
+  const selBtn=menu.querySelector('[data-clear="sel"]');
+  selBtn.style.display = hasSel ? '' : 'none';
+  openPopMenu(menu, $('btnClearAll'));
 };
+$('clearMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+  closePopMenus();
+  if(b.dataset.clear==='sel') deleteSelected();
+  else {
+    if(confirm('Excluir todos os objetos?')) clearAll();
+  }
+});
 /* --------- processar / reverter --------- */
 let pendingTargets=null; // mantido para a interpretação de formas
 let smoothSession=null, smoothRAF=null;
