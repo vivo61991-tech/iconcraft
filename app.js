@@ -2429,11 +2429,7 @@ function renderPicker(){
     st.hsl={h,s,l:L};
     setPickerColor(hslToHex(h,s,L), true);
   };
-  el.querySelector('#cpEye').onclick=()=>{
-    eyedropActive=true;
-    $('board').style.cursor='copy';
-    toast('Clique num ponto do desenho para capturar a cor.');
-  };
+  el.querySelector('#cpEye').onclick=()=>{ startEyedropCapture(); };
   el.querySelector('#cpClose').onclick=()=>closeColorPicker();
   const me=el.querySelector('#cpMore'); if(me) me.onclick=()=>{ st.expanded=!st.expanded; renderPicker(); };
   const ed=el.querySelector('#cpEdit'); if(ed) ed.onclick=()=>{ st.editMode=!st.editMode; renderPicker(); };
@@ -2581,15 +2577,76 @@ function setupWheel(el){
     const hx=el.querySelector('#cpHex'); if(hx) hx.value=st.color;
   };
 }
-/* conta-gotas: intercepta o clique no board antes das ferramentas */
+/* ================= captura de cor em tela cheia ================= */
+let eyedropCapture=null; // {origColor, provisional, pickerBackup, panelWasOpen}
+function startEyedropCapture(){
+  if(!pickerState) return;
+  // guarda o estado atual para restaurar depois
+  eyedropCapture={
+    origColor: pickerState.color,
+    provisional: pickerState.color,
+    onPick: pickerState.onPick,
+    anchorColor: pickerState.color,
+    mode: pickerState.mode,
+    panelWasOpen: document.body.classList.contains('props-open')
+  };
+  // esconde o seletor e limpa a tela
+  const cp=$('colorPicker'); if(cp) cp.style.display='none';
+  document.body.classList.add('eyedrop-capturing');
+  eyedropActive=true;
+  // barra começa com a cor atual
+  updateEyedropBar(pickerState.color);
+  toast('Toque no desenho para provar a cor. Confirme em Aplicar.');
+}
+function updateEyedropBar(color){
+  const sw=$('eyedropSwatch'), hx=$('eyedropHex');
+  if(color){ if(sw) sw.style.background=color; if(hx) hx.textContent=color.toUpperCase(); }
+  else { if(sw) sw.style.background='transparent'; if(hx) hx.textContent='—'; }
+}
+function endEyedropCapture(apply){
+  const cap=eyedropCapture; if(!cap) return;
+  eyedropActive=false;
+  document.body.classList.remove('eyedrop-capturing');
+  const cp=$('colorPicker'); if(cp) cp.style.display='';
+  eyedropCapture=null;
+  if(apply && cap.provisional){
+    setPickerColor(cap.provisional);   // carrega a cor no seletor e aplica no alvo
+  }
+  // o seletor volta como estava (já visível); nada mais a fazer
+}
+// prova a cor num ponto (toque simples, sem confirmar)
+function eyedropSample(e){
+  const c=sampleCanvas(boardPoint(e));
+  if(c){ eyedropCapture.provisional=c; updateEyedropBar(c); }
+  else { updateEyedropBar(null); toast('Área transparente nesse ponto.'); }
+}
+// gestos durante a captura: reutiliza o sistema pan/pinça (arrastar 1 dedo, pinça 2 dedos)
+// e um toque simples (sem mover) prova a cor.
+let edTap={pt:null, moved:false};
 $('board').addEventListener('pointerdown',e=>{
   if(!eyedropActive) return;
-  e.stopPropagation(); e.preventDefault();
-  const c=sampleCanvas(boardPoint(e));
-  eyedropActive=false; $('board').style.cursor='';
-  if(c) setPickerColor(c);
-  else toast('Área transparente — nenhuma cor nesse ponto.');
+  e.stopPropagation();
+  edTap.pt={x:e.clientX,y:e.clientY,id:e.pointerId}; edTap.moved=false;
+  panPointerDown(e);   // habilita arraste/pinça
 }, true);
+$('board').addEventListener('pointermove',e=>{
+  if(!eyedropActive) return;
+  if(edTap.pt && edTap.pt.id===e.pointerId){
+    if(Math.abs(e.clientX-edTap.pt.x)>6 || Math.abs(e.clientY-edTap.pt.y)>6) edTap.moved=true;
+  }
+  panPointerMove(e);
+}, true);
+$('board').addEventListener('pointerup',e=>{
+  if(!eyedropActive) return;
+  e.stopPropagation();
+  const wasTap = edTap.pt && edTap.pt.id===e.pointerId && !edTap.moved && activePointers.size<=1;
+  panPointerUp(e);
+  if(wasTap) eyedropSample(e);   // toque simples = provar a cor
+  edTap.pt=null;
+}, true);
+$('board').addEventListener('pointercancel',e=>{ if(eyedropActive){ panPointerUp(e); edTap.pt=null; } }, true);
+$('eyedropApply').onclick=()=>endEyedropCapture(true);
+$('eyedropCancel').onclick=()=>endEyedropCapture(false);
 /* fecha ao clicar fora */
 document.addEventListener('pointerdown',e=>{
   if(!pickerState || eyedropActive) return;

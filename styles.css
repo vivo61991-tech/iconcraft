@@ -525,3 +525,53 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 #board.toolmode-select #overlay .thandle,
 #board.toolmode-select #overlay .node{pointer-events:auto}
 #board.toolmode-select #composite{pointer-events:auto}
+
+/* ================= captura de cor em tela cheia ================= */
+#eyedropOverlay{display:none}
+body.eyedrop-capturing #eyedropOverlay{
+  display:block;position:fixed;inset:0;z-index:600;pointer-events:none;
+}
+/* esconde tudo menos o canvas durante a captura */
+body.eyedrop-capturing #toolbox,
+body.eyedrop-capturing #panel,
+body.eyedrop-capturing header,
+body.eyedrop-capturing #mobileFab,
+body.eyedrop-capturing #mobileNav,
+body.eyedrop-capturing #mobileProps,
+body.eyedrop-capturing #orderFabs,
+body.eyedrop-capturing #panelReopen,
+body.eyedrop-capturing .popmenu{
+  opacity:0 !important;pointer-events:none !important;visibility:hidden !important;
+}
+/* realça o board */
+body.eyedrop-capturing #board{cursor:crosshair}
+body.eyedrop-capturing #workspace{touch-action:none}
+
+/* barra superior: cor + hex + status */
+#eyedropBar{
+  position:fixed;top:0;left:0;right:0;height:64px;z-index:601;pointer-events:auto;
+  display:flex;align-items:center;gap:12px;padding:0 16px;
+  background:var(--bg1);border-bottom:1px solid var(--line2);box-shadow:0 2px 16px rgba(0,0,0,.3);
+}
+#eyedropSwatch{width:38px;height:38px;border-radius:9px;border:2px solid var(--line2);flex:0 0 auto;
+  background-image:linear-gradient(45deg,#8883 25%,transparent 25%,transparent 75%,#8883 75%),linear-gradient(45deg,#8883 25%,transparent 25%,transparent 75%,#8883 75%);
+  background-size:10px 10px;background-position:0 0,5px 5px;}
+#eyedropHex{font-size:17px;font-weight:700;letter-spacing:.5px;font-variant-numeric:tabular-nums;color:var(--text)}
+#eyedropTag{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
+#eyedropHint{
+  position:fixed;top:72px;left:50%;transform:translateX(-50%);z-index:601;pointer-events:none;
+  font-size:12px;color:var(--muted);background:var(--bg1);padding:6px 12px;border-radius:20px;
+  border:1px solid var(--line);white-space:nowrap;opacity:.95;
+}
+/* ações inferiores */
+#eyedropActions{
+  position:fixed;bottom:0;left:0;right:0;z-index:601;pointer-events:auto;
+  display:flex;gap:12px;padding:16px;justify-content:center;
+  background:linear-gradient(to top,var(--bg0),transparent);
+}
+#eyedropActions .btn{min-width:130px;height:48px;font-size:15px;border-radius:12px}
+#eyedropActions .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+@media (max-width:767px){
+  #eyedropActions .btn{flex:1;min-width:0}
+  #eyedropTag{font-size:11px}
+}
