@@ -38,7 +38,7 @@ function defaultInk(){
 let pendingStyle=null;  // {w,color,nib,cap,...} para os próximos traços
 const NEW_STROKE = () => ({
   w:8, w2:4, color:defaultInk(), opacity:100, cap:'round', nib:'round',
-  fillOn:false, fill:'#5ac8fa', fillOpacity:100
+  fillOn:false, fill:'#5ac8fa', fillOpacity:100, lineOff:false
 });
 
 function toast(msg, err){
@@ -168,24 +168,36 @@ function getScratch(){
   scratchCv.width=RES; scratchCv.height=RES; // redefinir também limpa
   return scratchCv;
 }
+function lineColorOf(it){
+  // linha "sem cor": adota a cor do preenchimento (some sem perder a forma)
+  if(it.lineOff && it.fillOn) return it.fill;
+  return it.color;
+}
 function paintStroke(c, it, uniform){
   c.save();
   if(it.erase) c.globalCompositeOperation='destination-out';
   const p=itemPath2D(it);
+  const a=(it.erase||uniform)?1:(it.opacity/100);
   if(it.nib==='round'){
     if(!it.erase && it.fillOn && it.closed){
-      c.globalAlpha=it.fillOpacity/100;
+      c.globalAlpha=uniform?1:(a*(it.fillOpacity/100));
       c.fillStyle=it.fill;
       c.fill(p);
     }
-    c.globalAlpha=(it.erase||uniform)?1:(it.opacity/100);
-    c.strokeStyle=it.erase?'#000':it.color;
+    c.globalAlpha=a;
+    c.strokeStyle=it.erase?'#000':lineColorOf(it);
     c.lineWidth=it.w;
     c.lineCap=it.cap;
     c.stroke(p);
   } else {
-    c.globalAlpha=(it.erase||uniform)?1:(it.opacity/100);
-    const col=it.erase?'#000':it.color;
+    // pena caligráfica: também aceita preenchimento por objeto se fechado
+    if(!it.erase && it.fillOn && it.closed){
+      c.globalAlpha=uniform?1:(a*(it.fillOpacity/100));
+      c.fillStyle=it.fill;
+      c.fill(p);
+    }
+    c.globalAlpha=a;
+    const col=it.erase?'#000':lineColorOf(it);
     c.fillStyle=col;
     c.fill(p);
     c.strokeStyle=col;
@@ -221,31 +233,28 @@ function drawAllStrokes(ctx,k){
 function compose(){
   const cv=$('composite'), ctx=cv.getContext('2d');
   const k=RES/state.size;
-  const fills=state.items.filter(i=>i.kind==='fill');
-  let fillReady=false;
-  if(fills.length){
-    // passo 1: só os traços, como referência das bordas das regiões
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,RES,RES);
+  // desenha cada objeto na ORDEM da pilha (índice maior = mais acima).
+  // legado: itens antigos kind:'fill' (balde) ainda pintam ao fundo da região.
+  const legacyFills=state.items.filter(i=>i.kind==='fill');
+  if(legacyFills.length){
     if(!refCv) refCv=document.createElement('canvas');
     refCv.width=RES; refCv.height=RES;
     const rctx=refCv.getContext('2d');
-    rctx.setTransform(k,0,0,k,0,0);
-    rctx.lineJoin='round';
+    rctx.setTransform(k,0,0,k,0,0); rctx.lineJoin='round';
     drawAllStrokes(rctx,k);
-    // passo 2: camada de preenchimentos (fundo das regiões)
     const refD=rctx.getImageData(0,0,RES,RES).data;
     const lay=new ImageData(RES,RES);
-    for(const f of fills) floodIntoLayer(refD, lay.data, f, k);
+    for(const f of legacyFills) floodIntoLayer(refD, lay.data, f, k);
     if(!fillCv) fillCv=document.createElement('canvas');
     fillCv.width=RES; fillCv.height=RES;
     fillCv.getContext('2d').putImageData(lay,0,0);
-    fillReady=true;
+    ctx.drawImage(fillCv,0,0);
   }
-  // passo 3: composição final — fundo primeiro, traços por cima
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,RES,RES);
-  if(fillReady) ctx.drawImage(fillCv,0,0);
   ctx.setTransform(k,0,0,k,0,0);
   ctx.lineJoin='round';
+  // agora cada traço (com seu preenchimento próprio) na ordem de empilhamento
   drawAllStrokes(ctx,k);
 }
 /* balde: calcula a região limitada pelos traços e pinta na CAMADA DE FUNDO */
@@ -881,17 +890,45 @@ document.addEventListener('pointerdown',e=>{
   if(!e.target.closest('.popmenu') && !e.target.closest('#btnMirror') && !e.target.closest('#btnSaveTool')) closePopMenus();
 },true);
 /* --------- balde --------- */
+function fillObjectAt(p, color, op){
+  // encontra o objeto fechado mais acima cujo interior contém o ponto
+  const cv=$('composite'); const k=RES/state.size;
+  const ctx=cv.getContext('2d');
+  for(let i=state.items.length-1;i>=0;i--){
+    const it=state.items[i];
+    if(it.kind!=='stroke' || !it.closed || it.erase) continue;
+    const path=itemPath2D(it);
+    ctx.save(); ctx.setTransform(k,0,0,k,0,0);
+    const inside=ctx.isPointInPath(path, p.x*k, p.y*k);
+    ctx.restore();
+    if(inside){
+      it.fillOn=true; it.fill=color;
+      it.fillOpacity=(op!=null?op:100);
+      return it;
+    }
+  }
+  return null;
+}
 function doBucket(e){
   const p=boardPoint(e);
+  const col=state.bucket.color;
+  const op=(state.bucket.opacity!=null?state.bucket.opacity:100);
   pushUndo();
-  state.items.push({id:state.nextId++, kind:'fill', x:+p.x.toFixed(1), y:+p.y.toFixed(1),
-    color:state.bucket.color, opacity:(state.bucket.opacity!=null?state.bucket.opacity:100)});
-  if(state.mirror!=='off'){
-    const m=mirrorPoint(p);
-    state.items.push({id:state.nextId++, kind:'fill', x:+m.x.toFixed(1), y:+m.y.toFixed(1),
-      color:state.bucket.color, opacity:(state.bucket.opacity!=null?state.bucket.opacity:100)});
+  const hit=fillObjectAt(p, col, op);
+  if(hit){
+    syncTwin(hit);
+    if(state.mirror!=='off'){ const m=mirrorPoint(p); const h2=fillObjectAt(m,col,op); if(h2) syncTwin(h2); }
+    compose(); renderHits(); renderPanel(); autosave();
+  } else {
+    // nenhum objeto fechado sob o clique: cai no balde legado (região por pixels)
+    state.items.push({id:state.nextId++, kind:'fill', x:+p.x.toFixed(1), y:+p.y.toFixed(1),
+      color:col, opacity:op});
+    if(state.mirror!=='off'){
+      const m=mirrorPoint(p);
+      state.items.push({id:state.nextId++, kind:'fill', x:+m.x.toFixed(1), y:+m.y.toFixed(1), color:col, opacity:op});
+    }
+    compose(); renderPanel(); autosave();
   }
-  compose(); renderPanel(); autosave();
 }
 /* ============================================================
    SELEÇÃO, NÓS, REFERÊNCIA, PROCESSAMENTO, UNDO
@@ -904,6 +941,7 @@ function setSelection(ids){
   if((state.selId!=null || state.multi.length>1) && window.innerWidth<768) openProps('props');
 }
 function renderHits(){
+  if($('layersPanel')) renderLayers();
   gHits.innerHTML='';
   for(const it of state.items){
     if(it.kind!=='stroke' || !it.d) continue;
@@ -1390,11 +1428,12 @@ function updateFab(){
     if(btn) fab.innerHTML=btn.querySelector('svg').outerHTML;
     fab.classList.toggle('fab-active', CREATE_TOOLS.includes(state.tool));
   }
-  // FAB superior direito: navegação (selecionar / mover tela)
+  // FAB superior direito: navegação — mostra o modo memorizado (select/pan),
+  // sem mudar quando uma ferramenta de criação é ativada embaixo
   const nav=$('mobileNav');
   if(nav){
     const navActive = (state.tool==='select' || state.tool==='pan');
-    nav.innerHTML = state.tool==='pan' ? ICON_PAN : ICON_SELECT;
+    nav.innerHTML = (state.navMode==='pan') ? ICON_PAN : ICON_SELECT;
     nav.classList.toggle('fab-active', navActive);
   }
 }
@@ -1453,6 +1492,81 @@ $('mobileNav').onclick=()=>{
 $('mobileProps').onclick=toggleEnv;
 $('panelReopen').onclick=()=>openProps('props');
 $('btnSaveTool').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openPopMenu($('exportMenu'), $('btnSaveTool')); };
+
+/* ---------------- Painel de camadas ---------------- */
+function objectItems(){ return state.items.filter(i=>i.kind==='stroke'); }
+function layerLabel(it){
+  const kind = it.erase ? 'Recorte' : (it.closed ? 'Forma' : 'Traço');
+  const paint = (!it.erase && it.fillOn) ? ' • preenchido' : '';
+  return kind+' #'+it.id+paint;
+}
+function openLayers(){
+  let box=$('layersPanel');
+  if(box){ closeLayers(); return; }
+  box=document.createElement('div');
+  box.id='layersPanel';
+  document.body.appendChild(box);
+  renderLayers();
+  refreshLayersBtn();
+}
+function closeLayers(){ const b=$('layersPanel'); if(b) b.remove(); refreshLayersBtn(); }
+function refreshLayersBtn(){ const b=$('btnLayers'); if(b) b.classList.toggle('on', !!$('layersPanel')); }
+function renderLayers(){
+  const box=$('layersPanel'); if(!box) return;
+  const objs=objectItems().slice().reverse(); // topo da lista = topo da pilha
+  box.innerHTML='<div class="lay-head"><h3>Camadas</h3><button class="cp-mini" id="layClose">✕</button></div>'+
+    (objs.length? '<div class="lay-list" id="layList">'+objs.map(it=>{
+      const sel = (it.id===state.selId) || (state.multi&&state.multi.includes(it.id));
+      const sw = it.erase ? '<span class="lay-sw erase">⌫</span>'
+        : '<span class="lay-sw" style="background:'+(it.fillOn?it.fill:'transparent')+';border-color:'+it.color+'"></span>';
+      return '<div class="lay-item'+(sel?' sel':'')+'" draggable="true" data-id="'+it.id+'">'+
+        sw+'<span class="lay-name">'+layerLabel(it)+'</span>'+
+        '<button class="lay-btn" data-up="'+it.id+'" title="Subir">▲</button>'+
+        '<button class="lay-btn" data-down="'+it.id+'" title="Descer">▼</button>'+
+      '</div>';
+    }).join('')+'</div>'
+    : '<div class="lay-empty">Nenhum objeto ainda. Desenhe algo para ver as camadas aqui.</div>');
+  const cl=$('layClose'); if(cl) cl.onclick=closeLayers;
+  box.querySelectorAll('.lay-item').forEach(row=>{
+    const id=+row.dataset.id;
+    row.querySelector('[data-up]')?.addEventListener('click',ev=>{ ev.stopPropagation(); moveLayer(id,+1); });
+    row.querySelector('[data-down]')?.addEventListener('click',ev=>{ ev.stopPropagation(); moveLayer(id,-1); });
+    row.addEventListener('click',()=>{ setSelection([id]); renderUi(); renderPanel(); renderLayers(); });
+    row.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain', id); row.classList.add('drag'); });
+    row.addEventListener('dragend',()=>row.classList.remove('drag'));
+    row.addEventListener('dragover',ev=>{ ev.preventDefault(); row.classList.add('over'); });
+    row.addEventListener('dragleave',()=>row.classList.remove('over'));
+    row.addEventListener('drop',ev=>{
+      ev.preventDefault(); row.classList.remove('over');
+      const from=+ev.dataTransfer.getData('text/plain'), to=id;
+      if(from!==to) dropLayer(from,to);
+    });
+  });
+}
+function moveLayer(id, dir){
+  // dir +1 = subir na pilha (mais para cima visualmente = índice maior)
+  const arr=state.items;
+  const idx=arr.findIndex(i=>i.id===id);
+  if(idx<0) return;
+  // achar o vizinho stroke adjacente na direção
+  let j=idx+dir;
+  while(j>=0 && j<arr.length && arr[j].kind!=='stroke') j+=dir;
+  if(j<0||j>=arr.length) return;
+  pushUndo();
+  const tmp=arr[idx]; arr[idx]=arr[j]; arr[j]=tmp;
+  compose(); renderHits(); renderUi(); renderLayers(); autosave();
+}
+function dropLayer(fromId, toId){
+  const arr=state.items;
+  const fi=arr.findIndex(i=>i.id===fromId), ti=arr.findIndex(i=>i.id===toId);
+  if(fi<0||ti<0) return;
+  pushUndo();
+  const [moved]=arr.splice(fi,1);
+  const ti2=arr.findIndex(i=>i.id===toId);
+  arr.splice(ti2,0,moved);
+  compose(); renderHits(); renderUi(); renderLayers(); autosave();
+}
+$('btnLayers').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openLayers(); };
 $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
   closePopMenus();
   if(b.dataset.export==='svg') $('btnExportSvg').click();
@@ -1681,22 +1795,22 @@ function renderPanel(){
           '<input type="range" id="stW" min="2" max="90" value="'+it.w+'"><span class="range-val" id="stWv">'+it.w+'</span></div>'+
           '<div class="row"><label class="lbl">Grossura</label>'+
           '<input type="range" id="stW2" min="1" max="40" value="'+(it.w2!=null?it.w2:4)+'"><span class="range-val" id="stW2v">'+(it.w2!=null?it.w2:4)+'</span></div>')+
-      (it.erase?'':colorField('stColor',it.color)+
-      '<div class="row"><label class="lbl">Opacidade</label>'+
-        '<input type="range" id="stOp" min="5" max="100" value="'+it.opacity+'"><span class="range-val" id="stOpv">'+it.opacity+'</span></div>')+
+      (it.erase?'':
+        '<div class="row"><label class="lbl">Linha</label>'+
+          colorFieldX('stColor', it.lineOff?null:it.color, 'stLineOff')+'</div>'+
+        (it.closed?
+          '<div class="row"><label class="lbl">Preenchimento</label>'+
+            colorFieldX('stFill', it.fillOn?it.fill:null, 'stFillClear')+'</div>':'')+
+        '<div class="row"><label class="lbl">Opacidade</label>'+
+          '<input type="range" id="stOp" min="5" max="100" value="'+it.opacity+'"><span class="range-val" id="stOpv">'+it.opacity+'</span></div>')+
       (it.nib==='round'?'<div class="row"><label class="lbl">Pontas</label><div class="seg" id="segCap">'+
         '<button data-v="round" class="'+(it.cap==='round'?'on':'')+'">Redonda</button>'+
         '<button data-v="square" class="'+(it.cap==='square'?'on':'')+'">Quadrada</button>'+
         '<button data-v="butt" class="'+(it.cap==='butt'?'on':'')+'">Reta</button></div></div>':'')+
     '</div>';
-    if(!it.erase){
-      html+='<div class="sec"><h3>Preenchimento do traço'+(it.closed?'':' <span class="tag">aberto</span>')+'</h3>'+
-        '<label class="chk"><input type="checkbox" id="stFillOn"'+(it.fillOn?' checked':'')+(it.closed&&it.nib==='round'?'':' disabled')+'>Preencher forma</label>'+
-        colorField('stFill',it.fill)+
-        '<div class="row"><label class="lbl">Opacidade</label>'+
-          '<input type="range" id="stFillOp" min="5" max="100" value="'+it.fillOpacity+'"><span class="range-val" id="stFillOpv">'+it.fillOpacity+'</span></div>'+
-        (it.closed&&it.nib==='round'?'':'<div class="hint">Disponível para traços fechados com ponta redonda. Para preencher regiões compostas, use o balde de tinta.</div>')+
-      '</div>';
+    if(!it.erase && it.closed && it.fillOn){
+      html+='<div class="sec" style="padding-top:6px"><div class="row"><label class="lbl">Opacidade do preenchimento</label>'+
+        '<input type="range" id="stFillOp" min="5" max="100" value="'+it.fillOpacity+'"><span class="range-val" id="stFillOpv">'+it.fillOpacity+'</span></div></div>';
     }
     html+='<div class="sec"><h3>Ações</h3><div class="btn-row">'+
       '<button class="btn sm" id="stNodes">Editar nós</button>'+
@@ -1825,15 +1939,16 @@ function bindPanel(it){
     bindNib('stNib',v=>{it.nib=v;renderPanel();rr();});
     bindRange('stW',v=>{it.w=v;rr();});
     bindRange('stW2',v=>{it.w2=v;rr();});
-    bindColorField('stColor', ()=>it.color, v=>{it.color=v; rr();});
+    // LINHA (com opção sem cor = adota a cor do preenchimento)
+    bindColorField('stColor', ()=>it.color, v=>{ it.color=v; it.lineOff=false; rr(); renderPanel(); });
+    const lo=$('stLineOff'); if(lo) lo.onclick=()=>{ it.lineOff=true; rr(); renderPanel(); };
     bindRange('stOp',v=>{it.opacity=v;rr();});
     const sc=$('segCap'); if(sc) sc.querySelectorAll('button').forEach(b=>b.onclick=()=>{it.cap=b.dataset.v;renderPanel();rr();});
-    const fo=$('stFillOn'); if(fo) fo.onchange=e=>{it.fillOn=e.target.checked;rr();};
-    bindColorField('stFill', ()=>it.fill, v=>{
-      it.fill=v;
-      if(!it.fillOn && it.closed && it.nib==='round'){ it.fillOn=true; const fo=$('stFillOn'); if(fo) fo.checked=true; }
-      rr();
+    // PREENCHIMENTO (com opção sem cor = X)
+    bindColorField('stFill', ()=>it.fill||'#5AC8FA', v=>{
+      it.fill=v; it.fillOn=true; rr(); renderPanel();
     });
+    const fc=$('stFillClear'); if(fc) fc.onclick=()=>{ it.fillOn=false; rr(); renderPanel(); };
     bindRange('stFillOp',v=>{it.fillOpacity=v;rr();});
     const nd=$('ndDouble'); if(nd) nd.onclick=()=>doubleNodes(it);
     const nh=$('ndHalve'); if(nh) nh.onclick=()=>halveNodes(it);
@@ -2404,6 +2519,15 @@ function colorField(id,val){
   return '<div class="row"><label class="lbl">Cor</label>'+
     '<button class="cswatch" id="'+id+'" style="background:'+val+'"></button>'+
     '<input class="inp hexinp" id="'+id+'tx" value="'+String(val).toUpperCase()+'" maxlength="7" spellcheck="false"></div>';
+}
+function colorFieldX(id, val, clearId){
+  const empty = (val==null);
+  const sw = empty
+    ? '<button class="cswatch empty" id="'+id+'" title="Sem cor"></button>'
+    : '<button class="cswatch" id="'+id+'" style="background:'+val+'"></button>';
+  const tx = '<input class="inp hexinp" id="'+id+'tx" value="'+(empty?'':String(val).toUpperCase())+'" placeholder="—" maxlength="7" spellcheck="false">';
+  const clr = '<button class="btn sm cclear" id="'+clearId+'" title="Sem cor">✕</button>';
+  return sw+tx+clr;
 }
 function bindColorField(id, getV, setV){
   const sw=$(id), tx=$(id+'tx');
