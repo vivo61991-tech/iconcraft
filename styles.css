@@ -493,7 +493,9 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 .lay-item.drag{opacity:.4}
 .lay-sw{width:18px;height:18px;border-radius:5px;border:2px solid var(--line2);flex:0 0 auto}
 .lay-sw.erase{display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);background:var(--bg2)}
-.lay-name{flex:1;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lay-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.lay-name{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.lay-meta{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.2px;font-variant-numeric:tabular-nums}
 .lay-btn{width:22px;height:22px;border-radius:6px;color:var(--muted);font-size:9px;background:var(--bg2);flex:0 0 auto}
 .lay-btn:hover{background:var(--accent-soft);color:var(--accent)}
 .lay-empty{padding:16px 14px;font-size:12px;color:var(--muted)}

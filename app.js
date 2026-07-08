@@ -1510,6 +1510,15 @@ function layerLabel(it){
   const paint = (!it.erase && it.fillOn) ? ' • preenchido' : '';
   return kind+' #'+it.id+paint;
 }
+function layerMetrics(it){
+  // marco zero = centro do canvas. H: esquerda(-) direita(+). V: cima(-) baixo(+).
+  const bb=ptsBBox(it.pts||[]);
+  const cx=state.size/2, cy=state.size/2;
+  const h=Math.round(bb.cx-cx);   // posição horizontal do centro do objeto
+  const v=Math.round(bb.cy-cy);   // posição vertical
+  const w=Math.round(bb.w), ht=Math.round(bb.h);
+  return { h, v, w, ht };
+}
 function openLayers(){
   let box=$('layersPanel');
   if(box){ closeLayers(); return; }
@@ -1529,8 +1538,12 @@ function renderLayers(){
       const sel = (it.id===state.selId) || (state.multi&&state.multi.includes(it.id));
       const sw = it.erase ? '<span class="lay-sw erase">⌫</span>'
         : '<span class="lay-sw" style="background:'+(it.fillOn?it.fill:'transparent')+';border-color:'+it.color+'"></span>';
+      const m=layerMetrics(it);
+      const fmt=n=>(n>0?'+':'')+n;
       return '<div class="lay-item'+(sel?' sel':'')+'" draggable="true" data-id="'+it.id+'">'+
-        sw+'<span class="lay-name">'+layerLabel(it)+'</span>'+
+        sw+
+        '<div class="lay-info"><span class="lay-name">'+layerLabel(it)+'</span>'+
+          '<span class="lay-meta">H '+fmt(m.h)+' · V '+fmt(m.v)+' · '+m.w+'×'+m.ht+'</span></div>'+
         '<button class="lay-btn" data-up="'+it.id+'" title="Subir">▲</button>'+
         '<button class="lay-btn" data-down="'+it.id+'" title="Descer">▼</button>'+
       '</div>';
