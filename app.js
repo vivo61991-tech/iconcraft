@@ -951,7 +951,7 @@ function renderHits(){
     hit.setAttribute('fill', it.closed ? 'rgba(0,0,0,0)' : 'none');
     hit.setAttribute('stroke','transparent');
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
-    const noHit=['draw','erase','shape','pan','select','smooth'].includes(state.tool);
+    const noHit=['draw','erase','shape','pan','select','smooth','modify','nodes'].includes(state.tool);
     hit.style.cursor = noHit ? 'inherit' : 'pointer';
     // select é resolvido pelo board (objectAtPoint); aqui capturamos só p/ nodes etc.
     hit.style.pointerEvents = noHit ? 'none' : (it.closed ? 'all' : 'stroke');
@@ -1090,11 +1090,18 @@ function renderNodes(it){
   it.pts.forEach((p,i)=>{
     const c=document.createElementNS(SVGNS,'circle');
     c.setAttribute('cx',p.x); c.setAttribute('cy',p.y); c.setAttribute('r',rNode);
-    c.setAttribute('class','node');
+    c.setAttribute('class','node'+(nodeSubmode==='remove'?' node-rem':(nodeSubmode==='add'?' node-dim':'')));
     c.setAttribute('pointer-events','auto');
     c.setAttribute('vector-effect','non-scaling-stroke');
     c.addEventListener('pointerdown',e=>{
       e.stopPropagation(); e.preventDefault();
+      if(nodeSubmode==='remove'){
+        if(it.pts.length<=(it.closed?3:2)){ toast('O traço precisa de pelo menos '+(it.closed?3:2)+' pontos.'); return; }
+        pushUndo();
+        it.pts.splice(i,1); rebuildPath(it); syncTwin(it);
+        compose(); renderHits(); renderUi(); renderPanel(); autosave();
+        return;
+      }
       startNodeDrag(it,i,e,c);
     });
     c.addEventListener('dblclick',e=>{
@@ -1411,6 +1418,8 @@ function setTool(t, fromList){
   bd.className=bd.className.replace(/\btoolmode-\w+/g,'').trim();
   bd.classList.add('toolmode-'+t);
   document.body.classList.toggle('tool-smooth', t==='smooth');
+  document.body.classList.toggle('tool-modify', t==='modify');
+  if(t!=='nodes') nodeSubmode=null;
   const cur={bucket:'cell',select:'default',nodes:'default',ref:'move',pan:'grab'};
   if(['draw','erase','shape'].includes(t)) setBoardCursor(buildBrushCursor());
   else setBoardCursor(cur[t]||'default');
@@ -1423,7 +1432,7 @@ function setTool(t, fromList){
   if(window.innerWidth<768){
     // FAB/atalho: apenas ativa (não abre painel). Somente selecionar na lista
     // da esquerda abre as opções da ferramenta.
-    const hasProps=['draw','erase','shape','bucket','layers','smooth'].includes(t);
+    const hasProps=['draw','erase','shape','bucket','layers','smooth','nodes','modify'].includes(t);
     if(fromList && hasProps) openProps('props');
     else closeProps();
   }
@@ -1664,14 +1673,12 @@ function beginSmoothSession(){
   const targets = state.multi.length>1
     ? state.multi.slice()
     : ((sel && sel.kind==='stroke') ? [sel.id] : strokeItems().map(s=>s.id));
-  smoothSession={backup:snapshot(), targets, value:50};
+  smoothSession={backup:snapshot(), targets, value:50, applied:false};
 }
 function endSmoothSession(commit){
   if(!smoothSession) return;
-  if(commit && (smoothSession.value<48 || smoothSession.value>52)){
-    undoStack.push(smoothSession.backup); if(undoStack.length>60) undoStack.shift();
-    redoStack=[]; updateUndoBtns(); autosave();
-  } else if(!commit){
+  // sair da ferramenta: mantém só o que foi aplicado; reverte o preview pendente
+  if(!smoothSession.applied){
     restore(smoothSession.backup); autosave();
   }
   smoothSession=null;
@@ -1695,15 +1702,14 @@ function applySmoothPreview(){
 }
 function smoothRetarget(){
   if(!smoothSession) return;
-  // troca de alvo: confirma o ajuste anterior e reinicia neutro no novo alvo
-  if(smoothSession.value<48 || smoothSession.value>52){
-    undoStack.push(smoothSession.backup);
-    if(undoStack.length>60) undoStack.shift();
-    redoStack=[]; updateUndoBtns();
-    autosave();
+  // troca de alvo SEM ter aplicado: reverte o traço anterior ao formato original.
+  if(!smoothSession.applied){
+    restore(smoothSession.backup);
   }
+  // novo baseline a partir do estado atual (já revertido ou já aplicado)
   smoothSession.backup=snapshot();
   smoothSession.value=50;
+  smoothSession.applied=false;
   const sl=$('smLevel'); if(sl) sl.value=50;
   const sv=$('smLevelv'); if(sv) sv.textContent='0';
   const sel=selItem();
@@ -1712,7 +1718,7 @@ function smoothRetarget(){
     : ((sel && sel.kind==='stroke')
       ? [sel.id]
       : state.items.filter(i=>i.kind==='stroke').map(i=>i.id));
-  renderUi(); renderPanel();
+  compose(); renderHits(); renderUi(); renderPanel();
 }
 /* a UI da suavização agora vive no painel da direita (renderPanel) */
 $('btnRevert').onclick=()=>{
@@ -1788,12 +1794,158 @@ function bindRange(id,fn,suffix){
 function reorderPanelForTool(){
   const P=$('panel');
   // palavra-chave do título de cada ferramenta -> sobe a seção ao topo
-  const map={bucket:'Balde', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas', smooth:'Suavizar traço', layers:'Camadas'};
+  const map={bucket:'Preenchimento', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas', smooth:'Suavizar traço', layers:'Camadas', modify:'Modificar', draw:'Lápis', erase:'Borracha', nodes:'Editar nós'};
   const key=map[state.tool];
   if(!key) return;
   const secs=[...P.querySelectorAll('.sec')];
   const target=secs.find(s=>{ const h=s.querySelector('h3'); return h && h.textContent.trim().startsWith(key); });
   if(target && target!==P.firstElementChild) P.insertBefore(target, P.firstElementChild);
+}
+// ---------- utilidades do painel ----------
+function panelHead(){
+  return '<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>';
+}
+function finishToolPanel(){
+  const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
+  bindPanel(selItem());
+  applyPanelMode();
+}
+// ---------- geradores de seção reutilizáveis ----------
+function secPencil(){ // lápis: pontas, espessura, cor da linha, opacidade
+  const ps=pendingStyle;
+  return '<div class="sec"><h3>Lápis</h3>'+
+    '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',ps.nib)+'</div>'+
+    (ps.nib==='round'
+      ? '<div class="row"><label class="lbl">Espessura</label>'+
+        '<input type="range" id="pdW" min="1" max="80" value="'+ps.w+'"><span class="range-val" id="pdWv">'+ps.w+'</span></div>'
+      : '<div class="row"><label class="lbl">Comprimento</label>'+
+        '<input type="range" id="pdW" min="2" max="90" value="'+ps.w+'"><span class="range-val" id="pdWv">'+ps.w+'</span></div>'+
+        '<div class="row"><label class="lbl">Grossura</label>'+
+        '<input type="range" id="pdW2" min="1" max="40" value="'+(ps.w2||4)+'"><span class="range-val" id="pdW2v">'+(ps.w2||4)+'</span></div>')+
+    '<div class="row"><label class="lbl">Cor da linha</label>'+colorFieldX('pdColor', ps.lineOff?null:ps.color, 'pdLineOff')+'</div>'+
+    (ps.nib==='round'?'<div class="row"><label class="lbl">Pontas</label><div class="seg" id="pdCap">'+
+      '<button data-v="round" class="'+(ps.cap==='round'?'on':'')+'">Redonda</button>'+
+      '<button data-v="square" class="'+(ps.cap==='square'?'on':'')+'">Quadrada</button>'+
+      '<button data-v="butt" class="'+(ps.cap==='butt'?'on':'')+'">Reta</button></div></div>':'')+
+    '<div class="row"><label class="lbl">Opacidade</label>'+
+      '<input type="range" id="pdOp" min="5" max="100" value="'+(ps.opacity!=null?ps.opacity:100)+'"><span class="range-val" id="pdOpv">'+(ps.opacity!=null?ps.opacity:100)+'</span></div>'+
+  '</div>';
+}
+function secEraser(){ // borracha: mesmas propriedades do lápis (sem cor)
+  const ps=pendingStyle;
+  return '<div class="sec"><h3>Borracha</h3>'+
+    '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',ps.nib)+'</div>'+
+    (ps.nib==='round'
+      ? '<div class="row"><label class="lbl">Espessura</label>'+
+        '<input type="range" id="pdW" min="1" max="80" value="'+ps.w+'"><span class="range-val" id="pdWv">'+ps.w+'</span></div>'
+      : '<div class="row"><label class="lbl">Comprimento</label>'+
+        '<input type="range" id="pdW" min="2" max="90" value="'+ps.w+'"><span class="range-val" id="pdWv">'+ps.w+'</span></div>'+
+        '<div class="row"><label class="lbl">Grossura</label>'+
+        '<input type="range" id="pdW2" min="1" max="40" value="'+(ps.w2||4)+'"><span class="range-val" id="pdW2v">'+(ps.w2||4)+'</span></div>')+
+    (ps.nib==='round'?'<div class="row"><label class="lbl">Pontas</label><div class="seg" id="pdCap">'+
+      '<button data-v="round" class="'+(ps.cap==='round'?'on':'')+'">Redonda</button>'+
+      '<button data-v="square" class="'+(ps.cap==='square'?'on':'')+'">Quadrada</button>'+
+      '<button data-v="butt" class="'+(ps.cap==='butt'?'on':'')+'">Reta</button></div></div>':'')+
+    '<div class="hint">A borracha apaga onde passa, com as mesmas pontas e espessura do lápis.</div>'+
+  '</div>';
+}
+function secShape(){ // forma: formas, cor linha, cor preench, espessura
+  const ps=pendingStyle;
+  return '<div class="sec"><h3>Forma geométrica</h3><div class="shape-grid">'+
+    SHAPE_DEFS.map(d=>'<button class="shape-opt shape-pick'+(state.shapeKind===d[0]?' on':'')+'" data-shape="'+d[0]+'"><svg viewBox="0 0 30 30">'+d[2]+'</svg>'+d[1]+'</button>').join('')+
+    '</div>'+
+    '<div class="row"><label class="lbl">Linha</label>'+colorFieldX('pdColor', ps.lineOff?null:ps.color, 'pdLineOff')+'</div>'+
+    '<div class="row"><label class="lbl">Preenchimento</label>'+colorFieldX('pdFill', ps.fillOn?ps.fill:null, 'pdFillClear')+'</div>'+
+    '<div class="row"><label class="lbl">Espessura da linha</label>'+
+      '<input type="range" id="pdW" min="1" max="80" value="'+ps.w+'"><span class="range-val" id="pdWv">'+ps.w+'</span></div>'+
+    '<div class="hint">Linha, preenchimento e espessura valem para toda forma criada. Preenchimento vazio (✕) = sem fundo. Clique e arraste no canvas.</div></div>';
+}
+function secFill(){ // preenchimento (antigo balde): cor, opacidade, tolerância
+  return '<div class="sec"><h3>Preenchimento</h3>'+
+    '<div class="row"><label class="lbl">Cor</label>'+
+      '<button class="cswatch" id="bkColor" style="background:'+state.bucket.color+'"></button>'+
+      '<input class="inp hexinp" id="bkColortx" value="'+String(state.bucket.color).toUpperCase()+'" maxlength="7" spellcheck="false"></div>'+
+    '<div class="row"><label class="lbl">Opacidade</label>'+
+      '<input type="range" id="bkOp" min="5" max="100" value="'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'"><span class="range-val" id="bkOpv">'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'</span></div>'+
+    '<div class="row"><label class="lbl">Tolerância</label>'+
+      '<input type="range" id="bkTol" min="8" max="140" value="'+state.bucket.tolerance+'"><span class="range-val" id="bkTolv">'+state.bucket.tolerance+'</span></div>'+
+    '<div class="hint">Clique dentro de uma forma fechada para preenchê-la. Em regiões abertas, usa tolerância para delimitar.</div>'+
+  '</div>';
+}
+function secNodes(it){ // editar nós: dobrar/dividir + adicionar/remover pontual + arrastar
+  if(!it || it.kind!=='stroke') return '<div class="sec"><h3>Editar nós</h3><div class="hint">Toque num traço para editar seus nós.</div></div>';
+  const add = nodeSubmode==='add', rem = nodeSubmode==='remove';
+  return '<div class="sec"><h3>Editar nós <span class="tag">'+it.pts.length+' nós</span></h3>'+
+    '<div class="cp-label" style="text-transform:uppercase;letter-spacing:.8px;margin:2px 0 6px;font-size:10px;color:var(--muted)">Quantidade</div>'+
+    '<div class="btn-row">'+
+      '<button class="btn sm" id="ndDouble">Dobrar</button>'+
+      '<button class="btn sm" id="ndHalve">Dividir</button></div>'+
+    '<div class="cp-label" style="text-transform:uppercase;letter-spacing:.8px;margin:10px 0 6px;font-size:10px;color:var(--muted)">Editar pontual</div>'+
+    '<div class="btn-row">'+
+      '<button class="btn sm'+(add?' primary':'')+'" id="ndAdd">'+(add?'Clique na linha…':'Adicionar nó')+'</button>'+
+      '<button class="btn sm'+(rem?' danger':'')+'" id="ndRemove">'+(rem?'Clique no nó…':'Remover nó')+'</button></div>'+
+    '<div class="hint">Dobrar/Dividir altera a quantidade de nós de uma vez. Em "Adicionar nó", toque sobre a linha para criar um nó ali; em "Remover nó", toque no nó a retirar. Fora desses modos, arraste os pontos livremente. Toque noutro objeto para editá-lo.</div>'+
+  '</div>';
+}
+
+let nodeSubmode=null; // null | 'add' | 'remove'
+let modifyOpen='linha'; // qual seção retrátil está aberta no Modificar
+function accItem(key, title, bodyHTML){
+  const open = modifyOpen===key;
+  return '<div class="acc'+(open?' open':'')+'" data-acc="'+key+'">'+
+    '<button class="acc-head" data-acctoggle="'+key+'"><span>'+title+'</span>'+
+      '<svg viewBox="0 0 24 24" class="acc-caret"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>'+
+    '<div class="acc-body"'+(open?'':' style="display:none"')+'>'+bodyHTML+'</div>'+
+  '</div>';
+}
+function secModify(it){
+  if(!it || it.kind!=='stroke'){
+    return '<div class="sec"><h3>Modificar</h3><div class="hint">Toque num objeto para modificá-lo. Você pode alternar entre objetos livremente.</div></div>';
+  }
+  const isCalig = it.nib!=='round';
+  // corpo LINHA (traço): ponta, espessura, cor da linha, pontas, opacidade
+  const linhaBody =
+    '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('stNib',it.nib)+'</div>'+
+    (!isCalig
+      ? '<div class="row"><label class="lbl">Espessura</label><input type="range" id="stW" min="1" max="80" value="'+it.w+'"><span class="range-val" id="stWv">'+it.w+'</span></div>'
+      : '<div class="row"><label class="lbl">Comprimento</label><input type="range" id="stW" min="2" max="90" value="'+it.w+'"><span class="range-val" id="stWv">'+it.w+'</span></div>'+
+        '<div class="row"><label class="lbl">Grossura</label><input type="range" id="stW2" min="1" max="40" value="'+(it.w2!=null?it.w2:4)+'"><span class="range-val" id="stW2v">'+(it.w2!=null?it.w2:4)+'</span></div>')+
+    (it.erase?'':'<div class="row"><label class="lbl">Cor da linha</label>'+colorFieldX('stColor', it.lineOff?null:it.color, 'stLineOff')+'</div>')+
+    (!isCalig?'<div class="row"><label class="lbl">Pontas</label><div class="seg" id="segCap">'+
+      '<button data-v="round" class="'+(it.cap==='round'?'on':'')+'">Redonda</button>'+
+      '<button data-v="square" class="'+(it.cap==='square'?'on':'')+'">Quadrada</button>'+
+      '<button data-v="butt" class="'+(it.cap==='butt'?'on':'')+'">Reta</button></div></div>':'')+
+    '<div class="row"><label class="lbl">Opacidade</label><input type="range" id="stOp" min="5" max="100" value="'+it.opacity+'"><span class="range-val" id="stOpv">'+it.opacity+'</span></div>';
+  // corpo PREENCHIMENTO
+  const fillBody = it.closed
+    ? '<div class="row"><label class="lbl">Cor</label>'+colorFieldX('stFill', it.fillOn?it.fill:null, 'stFillClear')+'</div>'+
+      (it.fillOn?'<div class="row"><label class="lbl">Opacidade</label><input type="range" id="stFillOp" min="5" max="100" value="'+it.fillOpacity+'"><span class="range-val" id="stFillOpv">'+it.fillOpacity+'</span></div>':'')
+    : '<div class="hint">Só traços fechados podem ser preenchidos.</div>';
+  // corpo SUAVIDADE (aplica direto no objeto)
+  const smv = (it._smv!=null?it._smv:50);
+  const suaveBody =
+    '<div class="sm-scale"><span class="sm-end">Reto</span>'+
+      '<input type="range" id="mdSmooth" min="0" max="100" value="'+smv+'">'+
+      '<span class="sm-end">Redondo</span></div>'+
+    '<div class="row" style="justify-content:center;margin:2px 0 6px"><span class="range-val" id="mdSmoothv">'+(smv-50)+'</span></div>'+
+    '<div class="btn-row" style="justify-content:center"><button class="btn sm primary" id="mdSmoothApply">Aplicar</button>'+
+      '<button class="btn sm" id="mdSmoothReset">Voltar ao meio</button></div>';
+  // corpo AÇÕES
+  const acoesBody =
+    '<div class="btn-row">'+
+      '<button class="btn sm" id="stNodes">Editar nós</button>'+
+      '<button class="btn sm" id="stMirrorV">Espelhar ↔</button>'+
+      '<button class="btn sm" id="stMirrorH">Espelhar ↕</button>'+
+      '<button class="btn sm" id="stDup">Duplicar</button>'+
+      '<button class="btn sm danger" id="stDel">Excluir</button></div>';
+
+  return '<div class="sec"><h3>Modificar <span class="tag">#'+it.id+'</span></h3>'+
+    '<div class="hint" style="margin-top:-2px">Toque noutro objeto para modificá-lo. Abra uma seção por vez.</div>'+
+    accItem('linha', it.erase?'Traço (borracha)':'Linha', linhaBody)+
+    accItem('preenchimento', 'Preenchimento', fillBody)+
+    accItem('suavidade', 'Suavidade', suaveBody)+
+    accItem('acoes', 'Ações', acoesBody)+
+  '</div>';
 }
 function renderPanel(){
   const P=$('panel');
@@ -1802,130 +1954,56 @@ function renderPanel(){
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   let html='';
   if(state.tool==='layers'){
-    html+=layersSectionHTML();
+    P.innerHTML=panelHead()+layersSectionHTML();
+    const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
+    bindLayersSection();
+    applyPanelMode();
+    return;
   }
   if(state.tool==='smooth'){
     const v = smoothSession ? smoothSession.value : 50;
-    const alvo = (smoothSession && smoothSession.targets && smoothSession.targets.length===1)
-      ? 'traço selecionado' : (state.multi.length>1 ? state.multi.length+' traços' : 'todos os traços');
-    html+='<div class="sec"><h3>Suavizar traço <span class="tag">'+alvo+'</span></h3>'+
+    const temAlvo = smoothSession && smoothSession.targets && smoothSession.targets.length===1;
+    const alvo = temAlvo ? 'traço selecionado' : (state.multi.length>1 ? state.multi.length+' traços' : 'toque num traço');
+    html='<div class="sec"><h3>Suavizar traço <span class="tag">'+alvo+'</span></h3>'+
       '<div class="sm-scale"><span class="sm-end">Reto</span>'+
         '<input type="range" id="smLevel" min="0" max="100" value="'+v+'">'+
         '<span class="sm-end">Redondo</span></div>'+
       '<div class="row" style="justify-content:center;margin:2px 0 8px"><span class="range-val" id="smLevelv">'+(v-50)+'</span></div>'+
-      '<div class="btn-row"><button class="btn sm primary" id="smApply">Aplicar</button>'+
+      '<div class="btn-row" style="justify-content:center"><button class="btn sm primary" id="smApply">Aplicar</button>'+
         '<button class="btn sm" id="smReset">Voltar ao meio</button></div>'+
-      '<div class="hint">Arraste para o redondo (elimina o tremido e arredonda) ou para o reto (deixa linear), sempre respeitando as pontas. Clique noutro traço para ajustá-lo — a ferramenta continua aberta até você trocar de ferramenta.</div>'+
     '</div>';
+    // no modo suavizar mostra SÓ esta seção (nada das propriedades do traço)
+    P.innerHTML='<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>'+html;
+    const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
+    bindSmoothPanel();
+    applyPanelMode();
+    return;
   }
-  if(multiSel && multiSel.length>1){
-    const f=multiSel[0];
-    html+='<div class="sec"><h3>Seleção múltipla <span class="tag">'+multiSel.length+' traços</span></h3>'+
-      colorField('muColor',f.color)+
-      colorField('muFill',f.fill)+
-      '<div class="row"><label class="lbl">Espessura</label>'+
-        '<input type="range" id="muW" min="1" max="80" value="'+f.w+'"><span class="range-val" id="muWv">'+f.w+'</span></div>'+
-      '<div class="row"><label class="lbl">Opacidade</label>'+
-        '<input type="range" id="muOp" min="5" max="100" value="'+f.opacity+'"><span class="range-val" id="muOpv">'+f.opacity+'</span></div>'+
-      '<div class="btn-row" style="margin-top:8px"><button class="btn sm danger" id="muDel">Excluir todos</button></div>'+
-      '<div class="hint">A primeira cor pinta o traço; a segunda, o preenchimento das formas fechadas de ponta redonda. Arraste qualquer item para mover o grupo todo; Shift+clique adiciona ou remove da seleção; setas movem o grupo; Delete exclui tudo.</div>'+
-    '</div>';
-  } else if(it && it.kind==='stroke'){
-    html+='<div class="sec"><h3>'+(it.erase?'Pincel negativo':'Traço')+' selecionado <span class="tag">#'+it.id+(it.processed?' · suave':' · bruto')+(it.link?' · espelhado':'')+'</span></h3>'+
-      '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('stNib',it.nib)+'</div>'+
-      (it.nib==='round'
-        ? '<div class="row"><label class="lbl">Espessura</label>'+
-          '<input type="range" id="stW" min="1" max="80" value="'+it.w+'"><span class="range-val" id="stWv">'+it.w+'</span></div>'
-        : '<div class="row"><label class="lbl">Comprimento</label>'+
-          '<input type="range" id="stW" min="2" max="90" value="'+it.w+'"><span class="range-val" id="stWv">'+it.w+'</span></div>'+
-          '<div class="row"><label class="lbl">Grossura</label>'+
-          '<input type="range" id="stW2" min="1" max="40" value="'+(it.w2!=null?it.w2:4)+'"><span class="range-val" id="stW2v">'+(it.w2!=null?it.w2:4)+'</span></div>')+
-      (it.erase?'':
-        '<div class="row"><label class="lbl">Linha</label>'+
-          colorFieldX('stColor', it.lineOff?null:it.color, 'stLineOff')+'</div>'+
-        (it.closed?
-          '<div class="row"><label class="lbl">Preenchimento</label>'+
-            colorFieldX('stFill', it.fillOn?it.fill:null, 'stFillClear')+'</div>':'')+
-        '<div class="row"><label class="lbl">Opacidade</label>'+
-          '<input type="range" id="stOp" min="5" max="100" value="'+it.opacity+'"><span class="range-val" id="stOpv">'+it.opacity+'</span></div>')+
-      (it.nib==='round'?'<div class="row"><label class="lbl">Pontas</label><div class="seg" id="segCap">'+
-        '<button data-v="round" class="'+(it.cap==='round'?'on':'')+'">Redonda</button>'+
-        '<button data-v="square" class="'+(it.cap==='square'?'on':'')+'">Quadrada</button>'+
-        '<button data-v="butt" class="'+(it.cap==='butt'?'on':'')+'">Reta</button></div></div>':'')+
-    '</div>';
-    if(!it.erase && it.closed && it.fillOn){
-      html+='<div class="sec" style="padding-top:6px"><div class="row"><label class="lbl">Opacidade do preenchimento</label>'+
-        '<input type="range" id="stFillOp" min="5" max="100" value="'+it.fillOpacity+'"><span class="range-val" id="stFillOpv">'+it.fillOpacity+'</span></div></div>';
-    }
-    html+='<div class="sec"><h3>Ações</h3><div class="btn-row">'+
-      '<button class="btn sm" id="stNodes">Editar nós</button>'+
-      '<button class="btn sm" id="stMirrorV">Espelhar ↔</button>'+
-      '<button class="btn sm" id="stMirrorH">Espelhar ↕</button>'+
-      '<button class="btn sm" id="stDup">Duplicar</button>'+
-      '<button class="btn sm danger" id="stDel">Excluir</button></div>'+
-      '<div class="hint">Editar nós: arraste os pontos para ajustar a curva; duplo clique num ponto remove. Espelhar cria cópia refletida no centro do canvas.</div>'+
-    '</div>';
-    if(state.tool==='nodes'){
-      html+='<div class="sec"><h3>Nós <span class="tag">'+it.pts.length+'</span></h3>'+
-        '<div class="btn-row">'+
-        '<button class="btn sm" id="ndDouble">Dobrar nós</button>'+
-        '<button class="btn sm" id="ndHalve">Reduzir nós</button></div>'+
-        '<div class="hint">Duplo clique sobre a linha adiciona um nó no lugar; duplo clique num nó remove. Se o traço tem par espelhado vinculado, o outro lado acompanha automaticamente.</div>'+
-      '</div>';
-    }
-  } else {
-    html+='';
+  // ===== ferramentas de criação: cada uma mostra só suas seções =====
+  if(state.tool==='draw'){
+    P.innerHTML=panelHead()+secPencil();
+    finishToolPanel(); return;
   }
-
+  if(state.tool==='erase'){
+    P.innerHTML=panelHead()+secEraser();
+    finishToolPanel(); return;
+  }
   if(state.tool==='shape'){
-    html+='<div class="sec"><h3>Forma geométrica</h3><div class="shape-grid">'+
-      SHAPE_DEFS.map(d=>'<button class="shape-opt shape-pick'+(state.shapeKind===d[0]?' on':'')+'" data-shape="'+d[0]+'"><svg viewBox="0 0 30 30">'+d[2]+'</svg>'+d[1]+'</button>').join('')+
-      '</div>'+
-      '<div class="row"><label class="lbl">Linha</label>'+
-        colorFieldX('pdColor', pendingStyle.lineOff?null:pendingStyle.color, 'pdLineOff')+'</div>'+
-      '<div class="row"><label class="lbl">Preenchimento</label>'+
-        colorFieldX('pdFill', pendingStyle.fillOn?pendingStyle.fill:null, 'pdFillClear')+'</div>'+
-      '<div class="row"><label class="lbl">Espessura da linha</label>'+
-        '<input type="range" id="pdW" min="1" max="80" value="'+pendingStyle.w+'"><span class="range-val" id="pdWv">'+pendingStyle.w+'</span></div>'+
-      '<div class="hint">Defina linha, preenchimento e espessura: toda forma criada mantém essas cores até você mudá-las. Preenchimento vazio (✕) cria forma sem fundo. Clique e arraste no canvas para criar.</div></div>';
+    P.innerHTML=panelHead()+secShape();
+    finishToolPanel(); return;
   }
-  if(state.tool!=='shape')
-  html+='<div class="sec"><h3>Próximos traços</h3>'+
-    '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',pendingStyle.nib)+'</div>'+
-    (pendingStyle.nib==='round'
-      ? '<div class="row"><label class="lbl">Espessura</label>'+
-        '<input type="range" id="pdW" min="1" max="80" value="'+pendingStyle.w+'"><span class="range-val" id="pdWv">'+pendingStyle.w+'</span></div>'
-      : '<div class="row"><label class="lbl">Comprimento</label>'+
-        '<input type="range" id="pdW" min="2" max="90" value="'+pendingStyle.w+'"><span class="range-val" id="pdWv">'+pendingStyle.w+'</span></div>'+
-        '<div class="row"><label class="lbl">Grossura</label>'+
-        '<input type="range" id="pdW2" min="1" max="40" value="'+(pendingStyle.w2||4)+'"><span class="range-val" id="pdW2v">'+(pendingStyle.w2||4)+'</span></div>')+
-    '<div class="row"><label class="lbl">Linha</label>'+
-      colorFieldX('pdColor', pendingStyle.lineOff?null:pendingStyle.color, 'pdLineOff')+'</div>'+
-    '<div class="row"><label class="lbl">Preenchimento</label>'+
-      colorFieldX('pdFill', pendingStyle.fillOn?pendingStyle.fill:null, 'pdFillClear')+'</div>'+
-    '<div class="hint">Defina linha e preenchimento antes de desenhar: a nova forma fechada já nasce com essas cores. Preenchimento vazio (✕) cria forma sem fundo.</div>'+
-  '</div>';
-
-  const fills=state.items.filter(i=>i.kind==='fill');
-  html+='<div class="sec"><h3>Balde de tinta <span class="tag">'+fills.length+'</span></h3>'+
-    colorField('bkColor',state.bucket.color)+
-    '<div class="row"><label class="lbl">Opacidade</label>'+
-      '<input type="range" id="bkOp" min="5" max="100" value="'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'"><span class="range-val" id="bkOpv">'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'</span></div>'+
-    '<div class="row"><label class="lbl">Tolerância</label>'+
-      '<input type="range" id="bkTol" min="8" max="140" value="'+state.bucket.tolerance+'"><span class="range-val" id="bkTolv">'+state.bucket.tolerance+'</span></div>'+
-    '<div id="fillList">'+fills.map((f,ix)=>'<div class="fill-item"><span class="fill-swatch" style="background:'+f.color+';opacity:'+((f.opacity!=null?f.opacity:100)/100)+'"></span>'+
-      '<span class="grow">Preenchimento '+(ix+1)+'</span>'+
-      '<button class="btn sm" data-editfill="'+f.id+'">Editar</button>'+
-      '<button class="btn sm danger" data-delfill="'+f.id+'">×</button></div>').join('')+'</div>'+
-    (editFillId!=null && fills.some(f=>f.id===editFillId) ? (()=>{
-      const f=fills.find(x=>x.id===editFillId);
-      return '<div style="margin-top:8px;padding-top:10px;border-top:1px solid var(--line)"><div class="cp-label" style="text-transform:uppercase;letter-spacing:.9px;margin-bottom:7px">Editar preenchimento</div>'+
-        colorField('efColor',f.color)+
-        '<div class="row"><label class="lbl">Opacidade</label>'+
-          '<input type="range" id="efOp" min="5" max="100" value="'+(f.opacity!=null?f.opacity:100)+'"><span class="range-val" id="efOpv">'+(f.opacity!=null?f.opacity:100)+'</span></div></div>';
-    })() : '')+
-    '<div class="hint">Clique dentro de uma região fechada para preencher. O preenchimento fica ao fundo — os elementos internos permanecem visíveis por cima.</div>'+
-  '</div>';
+  if(state.tool==='bucket'){
+    P.innerHTML=panelHead()+secFill();
+    finishToolPanel(); return;
+  }
+  if(state.tool==='nodes'){
+    P.innerHTML=panelHead()+secNodes(it);
+    finishToolPanel(); return;
+  }
+  if(state.tool==='modify'){
+    P.innerHTML=panelHead()+secModify(it);
+    finishToolPanel(); return;
+  }
 
   const r=state.ref;
   html+='<div class="sec" data-group="env"><h3>Canvas</h3>'+
@@ -1979,15 +2057,27 @@ function bindSmoothPanel(){
     if(!smoothRAF) smoothRAF=requestAnimationFrame(()=>{ smoothRAF=null; applySmoothPreview(); });
   };
   const ap=$('smApply'); if(ap) ap.onclick=()=>{
-    endSmoothSession(true);
-    beginSmoothSession();      // reabre neutro para continuar aplicando
+    if(!smoothSession) return;
+    // confirma o ajuste atual: vira o novo baseline (registra no desfazer)
+    if(smoothSession.value<48 || smoothSession.value>52){
+      undoStack.push(smoothSession.backup); if(undoStack.length>60) undoStack.shift();
+      redoStack=[]; updateUndoBtns();
+    }
+    smoothSession.backup=snapshot();
+    smoothSession.applied=true;      // marca como aplicado (não reverte ao trocar)
+    smoothSession.value=50;
     const rr=$('smLevel'); if(rr) rr.value=50;
     const lv=$('smLevelv'); if(lv) lv.textContent='0';
-    toast('Ajuste aplicado. Continue ou clique noutro traço.');
+    toast('Ajuste aplicado. Continue ou toque noutro traço.');
     autosave();
   };
   const rs=$('smReset'); if(rs) rs.onclick=()=>{
-    if(smoothSession){ restore(smoothSession.backup); smoothSession.value=50; beginSmoothSession(); }
+    // volta ao meio: reverte o preview ao baseline atual, slider no zero
+    if(smoothSession){
+      restore(smoothSession.backup);
+      smoothSession.value=50;
+      compose(); renderHits(); renderUi();
+    }
     const rr=$('smLevel'); if(rr) rr.value=50;
     const lv=$('smLevelv'); if(lv) lv.textContent='0';
   };
@@ -1995,6 +2085,47 @@ function bindSmoothPanel(){
 function bindPanel(it){
   if(state.tool==='smooth') bindSmoothPanel();
   if(state.tool==='layers') bindLayersSection();
+  // acordeão do Modificar: abre um por vez
+  document.querySelectorAll('[data-acctoggle]').forEach(b=>b.onclick=()=>{
+    const k=b.dataset.acctoggle;
+    modifyOpen = (modifyOpen===k) ? null : k;
+    renderPanel();
+  });
+  // suavidade dentro do Modificar
+  if(state.tool==='modify' && it && it.kind==='stroke'){
+    const sr=$('mdSmooth');
+    if(sr){
+      let base=snapshot();
+      sr.oninput=()=>{
+        it._smv=parseInt(sr.value);
+        const lv=$('mdSmoothv'); if(lv) lv.textContent=(it._smv-50);
+        // preview
+        const j=JSON.parse(base); state.items=j.items;
+        const t2=state.items.find(x=>x.id===it.id);
+        if(t2){
+          if(it._smv>52){ t2.linear=false; processStroke(t2,(it._smv-50)/50); }
+          else if(it._smv<48){ straightenStroke(t2,(50-it._smv)/50); }
+          if(t2.link){ const tw=state.items.find(x=>x.id===t2.link.id); if(tw) syncTwin(t2); }
+        }
+        compose(); renderHits(); renderUi();
+      };
+      const ap=$('mdSmoothApply'); if(ap) ap.onclick=()=>{
+        if(it._smv!=null && (it._smv<48||it._smv>52)){
+          undoStack.push(base); if(undoStack.length>60) undoStack.shift(); redoStack=[]; updateUndoBtns();
+          base=snapshot();
+        }
+        it._smv=50; const rr=$('mdSmooth'); if(rr) rr.value=50;
+        const lv=$('mdSmoothv'); if(lv) lv.textContent='0';
+        toast('Suavidade aplicada.'); autosave();
+      };
+      const rs=$('mdSmoothReset'); if(rs) rs.onclick=()=>{
+        const j=JSON.parse(base); state.items=j.items; it._smv=50;
+        const rr=$('mdSmooth'); if(rr) rr.value=50;
+        const lv=$('mdSmoothv'); if(lv) lv.textContent='0';
+        compose(); renderHits(); renderUi();
+      };
+    }
+  }
   const multiSel2 = (state.multi && state.multi.length>1)
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   if(multiSel2 && multiSel2.length>1){
@@ -2030,12 +2161,14 @@ function bindPanel(it){
     });
     const fc=$('stFillClear'); if(fc) fc.onclick=()=>{ it.fillOn=false; rr(); renderPanel(); };
     bindRange('stFillOp',v=>{it.fillOpacity=v;rr();});
-    const nd=$('ndDouble'); if(nd) nd.onclick=()=>doubleNodes(it);
-    const nh=$('ndHalve'); if(nh) nh.onclick=()=>halveNodes(it);
-    $('stNodes').onclick=()=>{ ensureEditableNodes(it); compose(); setTool('nodes'); };
-    $('stMirrorV').onclick=()=>mirrorDup(it,'v');
-    $('stMirrorH').onclick=()=>mirrorDup(it,'h');
-    $('stDup').onclick=()=>{
+    const nd=$('ndDouble'); if(nd) nd.onclick=()=>{ nodeSubmode=null; doubleNodes(it); };
+    const nh=$('ndHalve'); if(nh) nh.onclick=()=>{ nodeSubmode=null; halveNodes(it); };
+    const nadd=$('ndAdd'); if(nadd) nadd.onclick=()=>{ nodeSubmode = nodeSubmode==='add'?null:'add'; renderPanel(); renderUi(); };
+    const nrem=$('ndRemove'); if(nrem) nrem.onclick=()=>{ nodeSubmode = nodeSubmode==='remove'?null:'remove'; renderPanel(); renderUi(); };
+    const sno=$('stNodes'); if(sno) sno.onclick=()=>{ ensureEditableNodes(it); compose(); setTool('nodes'); };
+    const smv2=$('stMirrorV'); if(smv2) smv2.onclick=()=>mirrorDup(it,'v');
+    const smh2=$('stMirrorH'); if(smh2) smh2.onclick=()=>mirrorDup(it,'h');
+    const sdu=$('stDup'); if(sdu) sdu.onclick=()=>{
       pushUndo();
       const c2=JSON.parse(JSON.stringify(it)); c2.id=state.nextId++;
       delete c2.link;
@@ -2045,7 +2178,7 @@ function bindPanel(it){
       state.items.push(c2); state.selId=c2.id;
       compose(); renderHits(); renderPanel(); autosave();
     };
-    $('stDel').onclick=()=>{
+    const sde=$('stDel'); if(sde) sde.onclick=()=>{
       pushUndo();
       state.items=state.items.filter(x=>x.id!==it.id); state.selId=null;
       compose(); renderHits(); renderPanel(); autosave();
@@ -2061,6 +2194,8 @@ function bindPanel(it){
   const pdlo=$('pdLineOff'); if(pdlo) pdlo.onclick=()=>{ pendingStyle.lineOff=true; renderPanel(); };
   bindColorField('pdFill', ()=>pendingStyle.fill||'#5AC8FA', v=>{ pendingStyle.fill=v; pendingStyle.fillOn=true; renderPanel(); });
   const pdfc=$('pdFillClear'); if(pdfc) pdfc.onclick=()=>{ pendingStyle.fillOn=false; renderPanel(); };
+  bindRange('pdOp',v=>{pendingStyle.opacity=v;});
+  const pdcap=$('pdCap'); if(pdcap) pdcap.querySelectorAll('button').forEach(b=>b.onclick=()=>{pendingStyle.cap=b.dataset.v;renderPanel();refreshBrushCursor();});
   bindColorField('bkColor', ()=>state.bucket.color, v=>{state.bucket.color=v;});
   bindRange('bkOp',v=>{state.bucket.opacity=v;});
   bindRange('bkTol',v=>{state.bucket.tolerance=v;});
@@ -2081,7 +2216,7 @@ function bindPanel(it){
     state.items=state.items.filter(x=>x.id!==parseInt(b.dataset.delfill));
     compose(); renderPanel(); autosave();
   });
-  $('refLoad').onclick=()=>{
+  const rl=$('refLoad'); if(rl) rl.onclick=()=>{
     const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
     inp.onchange=()=>{
       const f=inp.files[0]; if(!f) return;
@@ -2102,7 +2237,7 @@ function bindPanel(it){
   const rm=$('refRemove'); if(rm) rm.onclick=()=>{state.ref.src=null;applyRef();renderPanel();};
   bindRange('refOp',v=>{state.ref.opacity=v;applyRef();});
   bindRange('refSc',v=>{state.ref.scale=v/100;applyRef();},'%');
-  $('cvSize').onchange=e=>{
+  const cvs=$('cvSize'); if(cvs) cvs.onchange=e=>{
     const ratio=parseInt(e.target.value)/state.size;
     state.size=parseInt(e.target.value);
     for(const s of state.items){
@@ -2115,16 +2250,16 @@ function bindPanel(it){
     state.ref.scale*=ratio; state.ref.x*=ratio; state.ref.y*=ratio;
     buildBoard(); renderPanel(); autosave();
   };
-  $('cvGrid').onchange=e=>{state.gridOn=e.target.checked;drawGrid();autosave();};
-  $('cvGridSp').onchange=e=>{state.gridSpacing=parseInt(e.target.value);drawGrid();autosave();};
+  const cvg=$('cvGrid'); if(cvg) cvg.onchange=e=>{state.gridOn=e.target.checked;drawGrid();autosave();};
+  const cvgs=$('cvGridSp'); if(cvgs) cvgs.onchange=e=>{state.gridSpacing=parseInt(e.target.value);drawGrid();autosave();};
   const ga=$('cvGridAbove'); if(ga) ga.onchange=e=>{state.gridAbove=e.target.checked;drawGrid();autosave();};
   bindRange('cvBg',v=>{ localStorage.setItem(BG_KEY,String(Math.round(v))); applyBg(); });
   bindRange('cvZoom',v=>{state.zoom=v/100;applyBoardSize();applyRef();},'%');
   const zf=$('cvZoomFit'); if(zf) zf.onclick=zoomFit;
   const z1=$('cvZoom100'); if(z1) z1.onclick=()=>setZoom(1);
-  $('projSave').onclick=saveProjectAs;
-  $('projExport').onclick=exportProjectFile;
-  $('projImport').onclick=importProjectFile;
+  const pjs=$('projSave'); if(pjs) pjs.onclick=saveProjectAs;
+  const pje=$('projExport'); if(pje) pje.onclick=exportProjectFile;
+  const pji=$('projImport'); if(pji) pji.onclick=importProjectFile;
 }
 function mirrorDup(it,axis){
   pushUndo();
@@ -2719,6 +2854,7 @@ document.addEventListener('keydown',e=>{
   if(k==='r') setTool('ref');
   if(k==='p') setTool('pan');
   if(k==='l') setTool('layers');
+  if(k==='m') setTool('modify');
   if(e.key==='Escape'){ state.selId=null; state.multi=[]; renderUi(); renderPanel(); if(smoothSession) smoothRetarget(); }
   if((state.selId!=null || state.multi.length>1) && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
     const targets = state.multi.length>1
@@ -2795,12 +2931,40 @@ function objectAtPoint(p){
 }
 /* seleção/deseleção robusta por toque ou clique */
 $('board').addEventListener('pointerdown',e=>{
-  if(state.tool!=='select' && state.tool!=='smooth') return;
+  if(state.tool!=='select' && state.tool!=='smooth' && state.tool!=='modify' && state.tool!=='nodes') return;
   if(e.button!==undefined && e.button!==0) return;
-  if(e.target.closest && e.target.closest('.thandle,.node')) return;
+  // no submodo "adicionar", o clique deve criar nó na linha mesmo que caia perto de um nó
+  const ndAddMode = (state.tool==='nodes' && nodeSubmode==='add');
+  if(!ndAddMode && e.target.closest && e.target.closest('.thandle,.node')) return;
 
   const startP=boardPoint(e);
   const hit=objectAtPoint(startP);
+
+  // MODO EDITAR NÓS
+  if(state.tool==='nodes'){
+    const cur=selItem();
+    // clicou noutro objeto: migra a edição para ele
+    if(hit && (!cur || hit.id!==cur.id)){
+      setSelection([hit.id]); ensureEditableNodes(hit);
+      nodeSubmode=null; compose(); renderHits(); renderUi(); renderPanel();
+      return;
+    }
+    if(cur && cur.kind==='stroke'){
+      // submodo adicionar: clique na linha cria um nó ali
+      if(nodeSubmode==='add' && hit && hit.id===cur.id){
+        addNodeAt(cur, startP); renderUi();
+        return;
+      }
+      // (remover é tratado no clique do próprio nó, via renderNodes)
+    }
+    return;
+  }
+
+  // MODO MODIFICAR: toca noutro objeto = alterna alvo; permite arrastar/manipular
+  if(state.tool==='modify'){
+    if(hit){ setSelection([hit.id]); renderUi(); renderPanel(); startMoveDrag(hit, e); }
+    return;
+  }
 
   // MODO SUAVIZAR: toque isola o traço; arraste m=pan; pinça=zoom (ferramenta segue ativa)
   if(state.tool==='smooth'){
@@ -2825,7 +2989,7 @@ $('board').addEventListener('pointerdown',e=>{
   }
   e.preventDefault();
   startMarquee(e);
-});
+}, true);
 function setZoom(z){
   state.zoom=Math.max(0.25,Math.min(3,z));
   applyBoardSize(); applyRef(); refreshBrushCursor();

@@ -583,3 +583,27 @@ body.eyedrop-capturing #workspace{touch-action:none}
   }
 }
 /* desktop: painel lateral não cobre o canvas, então não precisa mudar */
+
+/* ============ acordeão do Modificar ============ */
+.acc{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden;background:var(--bg2)}
+.acc-head{
+  width:100%;display:flex;align-items:center;justify-content:space-between;
+  padding:11px 13px;background:transparent;border:none;color:var(--text);
+  font-size:13px;font-weight:600;cursor:pointer;text-align:left;
+}
+.acc-head:hover{background:var(--bg3)}
+.acc-caret{width:18px;height:18px;fill:var(--muted);transition:transform .18s}
+.acc.open .acc-caret{transform:rotate(180deg)}
+.acc.open .acc-head{border-bottom:1px solid var(--line)}
+.acc-body{padding:11px 13px}
+.acc-body .row:last-child{margin-bottom:0}
+
+/* modo Modificar: painel compacto (acordeão abre um por vez) */
+@media (max-width:767px){
+  body.tool-modify.props-open #panel{max-height:52vh}
+}
+
+/* feedback visual dos nós nos submodos de edição */
+.node-rem{fill:#e5484d !important;stroke:#fff;cursor:pointer}
+.node-rem:hover{fill:#ff6b6b !important;r:9}
+.node-dim{opacity:.55}
