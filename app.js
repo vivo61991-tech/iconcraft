@@ -942,7 +942,6 @@ function setSelection(ids){
   // (evita a caixa cobrindo a tela ao mover/redimensionar)
 }
 function renderHits(){
-  if($('layersPanel')) renderLayers();
   gHits.innerHTML='';
   for(const it of state.items){
     if(it.kind!=='stroke' || !it.d) continue;
@@ -1420,7 +1419,7 @@ function setTool(t){
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
   if(window.innerWidth<768){
-    const hasProps=['draw','erase','shape','bucket'].includes(t);
+    const hasProps=['draw','erase','shape','bucket','layers','smooth'].includes(t);
     if(hasProps) openProps('props');
     else if(t==='pan') closeProps();
   }
@@ -1519,42 +1518,42 @@ function layerMetrics(it){
   const w=Math.round(bb.w), ht=Math.round(bb.h);
   return { h, v, w, ht };
 }
-function openLayers(){
-  let box=$('layersPanel');
-  if(box){ closeLayers(); return; }
-  box=document.createElement('div');
-  box.id='layersPanel';
-  document.body.appendChild(box);
-  renderLayers();
-  refreshLayersBtn();
-}
-function closeLayers(){ const b=$('layersPanel'); if(b) b.remove(); refreshLayersBtn(); }
-function refreshLayersBtn(){ const b=$('btnLayers'); if(b) b.classList.toggle('on', !!$('layersPanel')); }
-function renderLayers(){
-  const box=$('layersPanel'); if(!box) return;
+function layersSectionHTML(){
   const objs=objectItems().slice().reverse(); // topo da lista = topo da pilha
-  box.innerHTML='<div class="lay-head"><h3>Camadas</h3><button class="cp-mini" id="layClose">✕</button></div>'+
-    (objs.length? '<div class="lay-list" id="layList">'+objs.map(it=>{
-      const sel = (it.id===state.selId) || (state.multi&&state.multi.includes(it.id));
-      const sw = it.erase ? '<span class="lay-sw erase">⌫</span>'
-        : '<span class="lay-sw" style="background:'+(it.fillOn?it.fill:'transparent')+';border-color:'+it.color+'"></span>';
-      const m=layerMetrics(it);
-      const fmt=n=>(n>0?'+':'')+n;
-      return '<div class="lay-item'+(sel?' sel':'')+'" draggable="true" data-id="'+it.id+'">'+
-        sw+
-        '<div class="lay-info"><span class="lay-name">'+layerLabel(it)+'</span>'+
-          '<span class="lay-meta">H '+fmt(m.h)+' · V '+fmt(m.v)+' · '+m.w+'×'+m.ht+'</span></div>'+
-        '<button class="lay-btn" data-up="'+it.id+'" title="Subir">▲</button>'+
-        '<button class="lay-btn" data-down="'+it.id+'" title="Descer">▼</button>'+
-      '</div>';
-    }).join('')+'</div>'
-    : '<div class="lay-empty">Nenhum objeto ainda. Desenhe algo para ver as camadas aqui.</div>');
-  const cl=$('layClose'); if(cl) cl.onclick=closeLayers;
-  box.querySelectorAll('.lay-item').forEach(row=>{
+  const selId = state.selId!=null ? state.selId : (state.multi.length===1?state.multi[0]:null);
+  const canMove = selId!=null;
+  let h='<div class="sec" data-group="layers"><div class="lay-head">'+
+    '<h3>Camadas <span class="tag">'+objs.length+'</span></h3>'+
+    '<div class="lay-move"><button class="lay-navbtn" id="layUp"'+(canMove?'':' disabled')+' title="Subir o selecionado">▲</button>'+
+    '<button class="lay-navbtn" id="layDown"'+(canMove?'':' disabled')+' title="Descer o selecionado">▼</button></div></div>';
+  if(!objs.length){
+    h+='<div class="lay-empty">Nenhum objeto ainda. Desenhe algo para ver as camadas aqui.</div></div>';
+    return h;
+  }
+  h+='<div class="lay-list" id="layList">'+objs.map(it=>{
+    const sel = (it.id===state.selId) || (state.multi&&state.multi.includes(it.id));
+    const sw = it.erase ? '<span class="lay-sw erase">⌫</span>'
+      : '<span class="lay-sw" style="background:'+(it.fillOn?it.fill:'transparent')+';border-color:'+it.color+'"></span>';
+    const m=layerMetrics(it);
+    const fmt=n=>(n>0?'+':'')+n;
+    return '<div class="lay-item'+(sel?' sel':'')+'" draggable="true" data-id="'+it.id+'">'+
+      sw+
+      '<div class="lay-info"><span class="lay-name">'+layerLabel(it)+'</span>'+
+        '<span class="lay-meta">x: '+fmt(m.h)+' · y: '+fmt(m.v)+' · '+m.w+'×'+m.ht+'</span></div>'+
+    '</div>';
+  }).join('')+'</div></div>';
+  return h;
+}
+function bindLayersSection(){
+  const list=$('layList');
+  const selId = state.selId!=null ? state.selId : (state.multi.length===1?state.multi[0]:null);
+  const up=$('layUp'), dn=$('layDown');
+  if(up) up.onclick=()=>{ if(selId!=null){ moveLayer(selId,+1); } };
+  if(dn) dn.onclick=()=>{ if(selId!=null){ moveLayer(selId,-1); } };
+  if(!list) return;
+  list.querySelectorAll('.lay-item').forEach(row=>{
     const id=+row.dataset.id;
-    row.querySelector('[data-up]')?.addEventListener('click',ev=>{ ev.stopPropagation(); moveLayer(id,+1); });
-    row.querySelector('[data-down]')?.addEventListener('click',ev=>{ ev.stopPropagation(); moveLayer(id,-1); });
-    row.addEventListener('click',()=>{ setSelection([id]); renderUi(); renderPanel(); renderLayers(); });
+    row.addEventListener('click',()=>{ setSelection([id]); renderUi(); renderPanel(); });
     row.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain', id); row.classList.add('drag'); });
     row.addEventListener('dragend',()=>row.classList.remove('drag'));
     row.addEventListener('dragover',ev=>{ ev.preventDefault(); row.classList.add('over'); });
@@ -1565,6 +1564,9 @@ function renderLayers(){
       if(from!==to) dropLayer(from,to);
     });
   });
+  // manter o item selecionado visível (foco), rolando a lista até ele
+  const selRow=list.querySelector('.lay-item.sel');
+  if(selRow) selRow.scrollIntoView({block:'nearest'});
 }
 function moveLayer(id, dir){
   // dir +1 = subir na pilha (mais para cima visualmente = índice maior)
@@ -1577,7 +1579,7 @@ function moveLayer(id, dir){
   if(j<0||j>=arr.length) return;
   pushUndo();
   const tmp=arr[idx]; arr[idx]=arr[j]; arr[j]=tmp;
-  compose(); renderHits(); renderUi(); renderLayers(); autosave();
+  compose(); renderHits(); renderUi(); renderPanel(); autosave();
 }
 function dropLayer(fromId, toId){
   const arr=state.items;
@@ -1587,9 +1589,9 @@ function dropLayer(fromId, toId){
   const [moved]=arr.splice(fi,1);
   const ti2=arr.findIndex(i=>i.id===toId);
   arr.splice(ti2,0,moved);
-  compose(); renderHits(); renderUi(); renderLayers(); autosave();
+  compose(); renderHits(); renderUi(); renderPanel(); autosave();
 }
-$('btnLayers').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openLayers(); };
+/* camadas agora é ferramenta comum: ativada via setTool('layers') */
 $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
   closePopMenus();
   if(b.dataset.export==='svg') $('btnExportSvg').click();
@@ -1757,7 +1759,7 @@ function bindRange(id,fn,suffix){
 function reorderPanelForTool(){
   const P=$('panel');
   // palavra-chave do título de cada ferramenta -> sobe a seção ao topo
-  const map={bucket:'Balde', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas', smooth:'Suavizar traço'};
+  const map={bucket:'Balde', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas', smooth:'Suavizar traço', layers:'Camadas'};
   const key=map[state.tool];
   if(!key) return;
   const secs=[...P.querySelectorAll('.sec')];
@@ -1770,6 +1772,9 @@ function renderPanel(){
   const multiSel = (state.multi && state.multi.length>1)
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   let html='';
+  if(state.tool==='layers'){
+    html+=layersSectionHTML();
+  }
   if(state.tool==='smooth'){
     const v = smoothSession ? smoothSession.value : 50;
     const alvo = (smoothSession && smoothSession.targets && smoothSession.targets.length===1)
@@ -1960,6 +1965,7 @@ function bindSmoothPanel(){
 }
 function bindPanel(it){
   if(state.tool==='smooth') bindSmoothPanel();
+  if(state.tool==='layers') bindLayersSection();
   const multiSel2 = (state.multi && state.multi.length>1)
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   if(multiSel2 && multiSel2.length>1){
@@ -2605,6 +2611,7 @@ document.addEventListener('keydown',e=>{
   if(k==='n') setTool('nodes');
   if(k==='r') setTool('ref');
   if(k==='p') setTool('pan');
+  if(k==='l') setTool('layers');
   if(e.key==='Escape'){ state.selId=null; state.multi=[]; renderUi(); renderPanel(); if(smoothSession) smoothRetarget(); }
   if((state.selId!=null || state.multi.length>1) && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
     const targets = state.multi.length>1
