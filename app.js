@@ -938,7 +938,8 @@ function setSelection(ids){
   ids=[...new Set(ids)].filter(id=>state.items.some(i=>i.id===id && i.kind==='stroke'));
   if(ids.length<=1){ state.selId = ids.length ? ids[0] : null; state.multi=[]; }
   else { state.selId=null; state.multi=ids; }
-  if((state.selId!=null || state.multi.length>1) && window.innerWidth<768) openProps('props');
+  // não abre o painel automaticamente: o usuário usa a aba/seta quando quiser
+  // (evita a caixa cobrindo a tela ao mover/redimensionar)
 }
 function renderHits(){
   if($('layersPanel')) renderLayers();
@@ -953,7 +954,8 @@ function renderHits(){
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
     const drawMode=['draw','erase','shape','pan'].includes(state.tool);
     hit.style.cursor = drawMode ? 'inherit' : 'pointer';
-    hit.style.pointerEvents = drawMode ? 'none' : 'stroke';
+    // fechado: toda a área interna clicável (corpo é um só). aberto: só a linha.
+    hit.style.pointerEvents = drawMode ? 'none' : (it.closed ? 'all' : 'stroke');
     hit.addEventListener('pointerdown',e=>{
       if(state.tool==='draw'||state.tool==='erase'||state.tool==='shape'||state.tool==='bucket'||state.tool==='ref') return;
       e.stopPropagation();
@@ -1393,7 +1395,15 @@ function refreshBrushCursor(){
   if(['draw','erase','shape'].includes(state.tool)) setBoardCursor(buildBrushCursor());
 }
 function setTool(t){
+  // sair da ferramenta de suavização confirma o que estiver aplicado
+  if(state.tool==='smooth' && t!=='smooth') endSmoothSession(true);
+  const prev=state.tool;
   state.tool=t;
+  if(t==='smooth' && prev!=='smooth'){
+    if(!strokeItems().length){ toast('Desenhe algum traço primeiro.'); state.tool=prev; return; }
+    beginSmoothSession();
+    toast('Suavizar: escolha reto ou redondo. Clique noutro traço para ajustar outro.');
+  }
   document.querySelectorAll('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   const bd=$('board');
   bd.classList.toggle('tool-ref', t==='ref');
@@ -1605,19 +1615,22 @@ function straightenStroke(s, u){
   s.pts=simp; s.closed=closed; s.processed=true; s.linear=true;
   rebuildPath(s);
 }
-function openSmoothBar(){
-  if(smoothSession){ hideSmoothBar(); smoothSession=null; return; }
-  if(!strokeItems().length){ toast('Desenhe algum traço primeiro.'); return; }
+function beginSmoothSession(){
   const sel=selItem();
   const targets = state.multi.length>1
     ? state.multi.slice()
     : ((sel && sel.kind==='stroke') ? [sel.id] : strokeItems().map(s=>s.id));
   smoothSession={backup:snapshot(), targets, value:50};
-  setTool('select');
-  toast(sel && sel.kind==='stroke'
-    ? 'Ajustando apenas o traço selecionado.'
-    : 'Clique num traço para ajustar só ele — ou mova a barra para ajustar todos.');
-  showSmoothBar();
+}
+function endSmoothSession(commit){
+  if(!smoothSession) return;
+  if(commit && (smoothSession.value<48 || smoothSession.value>52)){
+    undoStack.push(smoothSession.backup); if(undoStack.length>60) undoStack.shift();
+    redoStack=[]; updateUndoBtns(); autosave();
+  } else if(!commit){
+    restore(smoothSession.backup); autosave();
+  }
+  smoothSession=null;
 }
 function applySmoothPreview(){
   if(!smoothSession) return;
@@ -1638,55 +1651,26 @@ function applySmoothPreview(){
 }
 function smoothRetarget(){
   if(!smoothSession) return;
-  // ajuste independente por alvo: ao trocar de alvo, o preview atual é
-  // confirmado (vai para o undo) e a barra volta ao meio (50 = neutro)
+  // troca de alvo: confirma o ajuste anterior e reinicia neutro no novo alvo
   if(smoothSession.value<48 || smoothSession.value>52){
     undoStack.push(smoothSession.backup);
     if(undoStack.length>60) undoStack.shift();
     redoStack=[]; updateUndoBtns();
-    smoothSession.backup=snapshot();
     autosave();
   }
+  smoothSession.backup=snapshot();
   smoothSession.value=50;
   const sl=$('smLevel'); if(sl) sl.value=50;
+  const sv=$('smLevelv'); if(sv) sv.textContent='0';
   const sel=selItem();
   smoothSession.targets = state.multi.length>1
     ? state.multi.slice()
     : ((sel && sel.kind==='stroke')
       ? [sel.id]
       : state.items.filter(i=>i.kind==='stroke').map(i=>i.id));
-  renderUi();
+  renderUi(); renderPanel();
 }
-function showSmoothBar(){
-  hideSmoothBar();
-  const bar=document.createElement('div');
-  bar.id='smoothBar';
-  bar.innerHTML='<span class="sm-end">Reto</span>'+
-    '<input type="range" id="smLevel" min="0" max="100" value="50">'+
-    '<span class="sm-end">Redondo</span>'+
-    '<button class="btn sm primary" id="smApply">Aplicar</button>'+
-    '<button class="btn sm" id="smCancel">Cancelar</button>';
-  document.body.appendChild(bar);
-  const r=bar.querySelector('#smLevel');
-  r.oninput=()=>{
-    smoothSession.value=parseInt(r.value);
-    if(!smoothRAF) smoothRAF=requestAnimationFrame(()=>{ smoothRAF=null; applySmoothPreview(); });
-  };
-  bar.querySelector('#smApply').onclick=()=>{
-    undoStack.push(smoothSession.backup); if(undoStack.length>60) undoStack.shift();
-    redoStack=[]; updateUndoBtns();
-    smoothSession=null; hideSmoothBar();
-    renderPanel(); autosave();
-    toast('Ajuste do traço aplicado.');
-  };
-  bar.querySelector('#smCancel').onclick=()=>{
-    const bk=smoothSession.backup;
-    smoothSession=null; hideSmoothBar();
-    restore(bk); autosave();
-  };
-}
-function hideSmoothBar(){ const b=$('smoothBar'); if(b) b.remove(); }
-$('btnSmoothTool').onclick=openSmoothBar;
+/* a UI da suavização agora vive no painel da direita (renderPanel) */
 $('btnRevert').onclick=()=>{
   const ps=strokeItems().filter(s=>s.processed);
   if(!ps.length){ toast('Nenhum traço processado para reverter.'); return; }
@@ -1720,14 +1704,14 @@ function pushUndo(){
     // confirma o ajuste em andamento e fecha a barra, para o backup
     // antigo nunca ressuscitar elementos já apagados
     undoStack.push(smoothSession.backup);
-    smoothSession=null; hideSmoothBar();
+    smoothSession=null;
   }
   undoStack.push(snapshot()); if(undoStack.length>60) undoStack.shift(); redoStack=[]; updateUndoBtns();
 }
 function undo(){
   if(smoothSession){
     const bk=smoothSession.backup;
-    smoothSession=null; hideSmoothBar();
+    smoothSession=null;
     restore(bk); updateUndoBtns(); autosave();
     return;
   }
@@ -1760,7 +1744,7 @@ function bindRange(id,fn,suffix){
 function reorderPanelForTool(){
   const P=$('panel');
   // palavra-chave do título de cada ferramenta -> sobe a seção ao topo
-  const map={bucket:'Balde', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas'};
+  const map={bucket:'Balde', shape:'Forma geométrica', pan:'Canvas', ref:'Canvas', smooth:'Suavizar traço'};
   const key=map[state.tool];
   if(!key) return;
   const secs=[...P.querySelectorAll('.sec')];
@@ -1773,6 +1757,20 @@ function renderPanel(){
   const multiSel = (state.multi && state.multi.length>1)
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   let html='';
+  if(state.tool==='smooth'){
+    const v = smoothSession ? smoothSession.value : 50;
+    const alvo = (smoothSession && smoothSession.targets && smoothSession.targets.length===1)
+      ? 'traço selecionado' : (state.multi.length>1 ? state.multi.length+' traços' : 'todos os traços');
+    html+='<div class="sec"><h3>Suavizar traço <span class="tag">'+alvo+'</span></h3>'+
+      '<div class="sm-scale"><span class="sm-end">Reto</span>'+
+        '<input type="range" id="smLevel" min="0" max="100" value="'+v+'">'+
+        '<span class="sm-end">Redondo</span></div>'+
+      '<div class="row" style="justify-content:center;margin:2px 0 8px"><span class="range-val" id="smLevelv">'+(v-50)+'</span></div>'+
+      '<div class="btn-row"><button class="btn sm primary" id="smApply">Aplicar</button>'+
+        '<button class="btn sm" id="smReset">Voltar ao meio</button></div>'+
+      '<div class="hint">Arraste para o redondo (elimina o tremido e arredonda) ou para o reto (deixa linear), sempre respeitando as pontas. Clique noutro traço para ajustá-lo — a ferramenta continua aberta até você trocar de ferramenta.</div>'+
+    '</div>';
+  }
   if(multiSel && multiSel.length>1){
     const f=multiSel[0];
     html+='<div class="sec"><h3>Seleção múltipla <span class="tag">'+multiSel.length+' traços</span></h3>'+
@@ -1835,8 +1833,16 @@ function renderPanel(){
   if(state.tool==='shape'){
     html+='<div class="sec"><h3>Forma geométrica</h3><div class="shape-grid">'+
       SHAPE_DEFS.map(d=>'<button class="shape-opt shape-pick'+(state.shapeKind===d[0]?' on':'')+'" data-shape="'+d[0]+'"><svg viewBox="0 0 30 30">'+d[2]+'</svg>'+d[1]+'</button>').join('')+
-      '</div><div class="hint">Clique e arraste no canvas para criar no tamanho desejado. Com o espelho ligado, o outro lado nasce junto e vinculado.</div></div>';
+      '</div>'+
+      '<div class="row"><label class="lbl">Linha</label>'+
+        colorFieldX('pdColor', pendingStyle.lineOff?null:pendingStyle.color, 'pdLineOff')+'</div>'+
+      '<div class="row"><label class="lbl">Preenchimento</label>'+
+        colorFieldX('pdFill', pendingStyle.fillOn?pendingStyle.fill:null, 'pdFillClear')+'</div>'+
+      '<div class="row"><label class="lbl">Espessura da linha</label>'+
+        '<input type="range" id="pdW" min="1" max="80" value="'+pendingStyle.w+'"><span class="range-val" id="pdWv">'+pendingStyle.w+'</span></div>'+
+      '<div class="hint">Defina linha, preenchimento e espessura: toda forma criada mantém essas cores até você mudá-las. Preenchimento vazio (✕) cria forma sem fundo. Clique e arraste no canvas para criar.</div></div>';
   }
+  if(state.tool!=='shape')
   html+='<div class="sec"><h3>Próximos traços</h3>'+
     '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',pendingStyle.nib)+'</div>'+
     (pendingStyle.nib==='round'
@@ -1846,8 +1852,11 @@ function renderPanel(){
         '<input type="range" id="pdW" min="2" max="90" value="'+pendingStyle.w+'"><span class="range-val" id="pdWv">'+pendingStyle.w+'</span></div>'+
         '<div class="row"><label class="lbl">Grossura</label>'+
         '<input type="range" id="pdW2" min="1" max="40" value="'+(pendingStyle.w2||4)+'"><span class="range-val" id="pdW2v">'+(pendingStyle.w2||4)+'</span></div>')+
-    colorField('pdColor',pendingStyle.color)+
-    '<div class="hint">A pena caligráfica muda a grossura conforme a direção do traço — igual caneta de ponta chata.</div>'+
+    '<div class="row"><label class="lbl">Linha</label>'+
+      colorFieldX('pdColor', pendingStyle.lineOff?null:pendingStyle.color, 'pdLineOff')+'</div>'+
+    '<div class="row"><label class="lbl">Preenchimento</label>'+
+      colorFieldX('pdFill', pendingStyle.fillOn?pendingStyle.fill:null, 'pdFillClear')+'</div>'+
+    '<div class="hint">Defina linha e preenchimento antes de desenhar: a nova forma fechada já nasce com essas cores. Preenchimento vazio (✕) cria forma sem fundo.</div>'+
   '</div>';
 
   const fills=state.items.filter(i=>i.kind==='fill');
@@ -1914,7 +1923,30 @@ function renderPanel(){
   reorderPanelForTool();
   applyPanelMode();
 }
+function bindSmoothPanel(){
+  const r=$('smLevel'); if(!r) return;
+  if(!smoothSession) beginSmoothSession();
+  r.oninput=()=>{
+    smoothSession.value=parseInt(r.value);
+    const lv=$('smLevelv'); if(lv) lv.textContent=(smoothSession.value-50);
+    if(!smoothRAF) smoothRAF=requestAnimationFrame(()=>{ smoothRAF=null; applySmoothPreview(); });
+  };
+  const ap=$('smApply'); if(ap) ap.onclick=()=>{
+    endSmoothSession(true);
+    beginSmoothSession();      // reabre neutro para continuar aplicando
+    const rr=$('smLevel'); if(rr) rr.value=50;
+    const lv=$('smLevelv'); if(lv) lv.textContent='0';
+    toast('Ajuste aplicado. Continue ou clique noutro traço.');
+    autosave();
+  };
+  const rs=$('smReset'); if(rs) rs.onclick=()=>{
+    if(smoothSession){ restore(smoothSession.backup); smoothSession.value=50; beginSmoothSession(); }
+    const rr=$('smLevel'); if(rr) rr.value=50;
+    const lv=$('smLevelv'); if(lv) lv.textContent='0';
+  };
+}
 function bindPanel(it){
+  if(state.tool==='smooth') bindSmoothPanel();
   const multiSel2 = (state.multi && state.multi.length>1)
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   if(multiSel2 && multiSel2.length>1){
@@ -1977,7 +2009,10 @@ function bindPanel(it){
   bindNib('pdNib',v=>{pendingStyle.nib=v;renderPanel();refreshBrushCursor();});
   bindRange('pdW',v=>{pendingStyle.w=v;refreshBrushCursor();});
   bindRange('pdW2',v=>{pendingStyle.w2=v;refreshBrushCursor();});
-  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v;refreshBrushCursor();});
+  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v; pendingStyle.lineOff=false; refreshBrushCursor(); renderPanel();});
+  const pdlo=$('pdLineOff'); if(pdlo) pdlo.onclick=()=>{ pendingStyle.lineOff=true; renderPanel(); };
+  bindColorField('pdFill', ()=>pendingStyle.fill||'#5AC8FA', v=>{ pendingStyle.fill=v; pendingStyle.fillOn=true; renderPanel(); });
+  const pdfc=$('pdFillClear'); if(pdfc) pdfc.onclick=()=>{ pendingStyle.fillOn=false; renderPanel(); };
   bindColorField('bkColor', ()=>state.bucket.color, v=>{state.bucket.color=v;});
   bindRange('bkOp',v=>{state.bucket.opacity=v;});
   bindRange('bkTol',v=>{state.bucket.tolerance=v;});
