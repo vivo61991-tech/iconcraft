@@ -78,7 +78,7 @@ function polyPath(pts,closed){
   if(closed) d+='Z';
   return d;
 }
-const NIB_ANGLE={h:0, v:Math.PI/2, d1:Math.PI/4, d2:3*Math.PI/4};
+const NIB_ANGLE={h:0, v:Math.PI/2, d1:3*Math.PI/4, d2:Math.PI/4};
 /* fita caligráfica: polígono formado deslocando a linha central pela “pena” */
 function ribbonD(pts, w, nib, closed, linear){
   if(pts.length<2) return '';
@@ -908,11 +908,14 @@ function renderHits(){
   for(const it of state.items){
     if(it.kind!=='stroke' || !it.d) continue;
     const hit=document.createElementNS(SVGNS,'path');
+    hit.setAttribute('class','stroke-hit');
     hit.setAttribute('d',it.d);
     hit.setAttribute('fill', it.closed ? 'rgba(0,0,0,0)' : 'none');
     hit.setAttribute('stroke','transparent');
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
-    if(!['draw','erase','shape','pan'].includes(state.tool)) hit.style.cursor='pointer';
+    const drawMode=['draw','erase','shape','pan'].includes(state.tool);
+    hit.style.cursor = drawMode ? 'inherit' : 'pointer';
+    hit.style.pointerEvents = drawMode ? 'none' : 'stroke';
     hit.addEventListener('pointerdown',e=>{
       if(state.tool==='draw'||state.tool==='erase'||state.tool==='shape'||state.tool==='bucket'||state.tool==='ref') return;
       e.stopPropagation();
@@ -1331,7 +1334,7 @@ function buildBrushCursor(){
       'fill-opacity="'+(erase?0:0.28)+'" stroke="'+color+'" stroke-width="'+sw+'"/>';
   } else {
     // pena caligráfica: retângulo fino no ângulo da pena
-    const ang={h:0,v:90,d1:45,d2:135}[nib]||0;
+    const ang={h:0,v:90,d1:135,d2:45}[nib]||0;
     const len=w, thick=Math.max(2,(ps.w2||4)*zoom);
     const lx=len-sw, ty=thick-sw;
     shape='<g transform="rotate('+ang+' '+c+' '+c+')">'+
@@ -1432,7 +1435,13 @@ function toggleEnv(){
   else openProps('env');
 }
 document.querySelectorAll('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
-$('mobileFab').onclick=()=>{ mobileMenuOpen ? closeMobileMenu() : openMobileMenu(); };
+$('mobileFab').onclick=()=>{
+  if(mobileMenuOpen){ closeMobileMenu(); return; }
+  // se a ferramenta de criação está inativa, o 1º toque apenas a ativa;
+  // só abre o menu quando ela já está ativa e é tocada de novo
+  if(!CREATE_TOOLS.includes(state.tool)){ setTool(state.lastCreate); return; }
+  openMobileMenu();
+};
 $('mobileNav').onclick=()=>{
   if(mobileMenuOpen) closeMobileMenu();
   // 1º toque ativa o modo guardado; 2º toque (já ativo) alterna select<->pan
@@ -2518,7 +2527,13 @@ function panPointerMove(e){
 function panPointerUp(e){
   activePointers.delete(e.pointerId);
   if(activePointers.size<2) pinch=null;
-  if(activePointers.size===0){ $('board').style.cursor='grab'; $('board')._panStart=null; }
+  if(activePointers.size===0){
+    $('board')._panStart=null;
+    // NÃO forçar 'grab' aqui: este handler é global e dispara ao terminar
+    // qualquer gesto (inclusive um risco). Só o modo pan usa 'grab'.
+    if(state.tool==='pan') setBoardCursor('grab');
+    else if(['draw','erase','shape'].includes(state.tool)) refreshBrushCursor();
+  }
 }
 document.addEventListener('pointermove',panPointerMove);
 document.addEventListener('pointerup',panPointerUp);
