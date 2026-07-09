@@ -1432,7 +1432,7 @@ function setTool(t, fromList){
   if(window.innerWidth<768){
     // FAB/atalho: apenas ativa (não abre painel). Somente selecionar na lista
     // da esquerda abre as opções da ferramenta.
-    const hasProps=['draw','erase','shape','bucket','layers','smooth','nodes','modify'].includes(t);
+    const hasProps=['draw','erase','shape','bucket','layers','smooth','nodes','modify','ref'].includes(t);
     if(fromList && hasProps) openProps('props');
     else closeProps();
   }
@@ -1543,18 +1543,38 @@ function layersSectionHTML(){
     h+='<div class="lay-empty">Nenhum objeto ainda. Desenhe algo para ver as camadas aqui.</div></div>';
     return h;
   }
-  h+='<div class="lay-list" id="layList">'+objs.map(it=>{
+  const fmt=n=>(n>0?'+':'')+n;
+  const rowHTML=(it)=>{
     const sel = (it.id===state.selId) || (state.multi&&state.multi.includes(it.id));
     const sw = it.erase ? '<span class="lay-sw erase">⌫</span>'
       : '<span class="lay-sw" style="background:'+(it.fillOn?it.fill:'transparent')+';border-color:'+it.color+'"></span>';
     const m=layerMetrics(it);
-    const fmt=n=>(n>0?'+':'')+n;
-    return '<div class="lay-item'+(sel?' sel':'')+'" draggable="true" data-id="'+it.id+'">'+
+    return '<div class="lay-row'+(sel?' sel':'')+'" data-id="'+it.id+'">'+
       sw+
       '<div class="lay-info"><span class="lay-name">'+layerLabel(it)+'</span>'+
         '<span class="lay-meta">x: '+fmt(m.h)+' · y: '+fmt(m.v)+' · '+m.w+'×'+m.ht+'</span></div>'+
     '</div>';
-  }).join('')+'</div></div>';
+  };
+  // agrupa pares espelhados num único container; demais itens ficam sozinhos
+  const done=new Set();
+  const blocks=[];
+  for(const it of objs){
+    if(done.has(it.id)) continue;
+    const twin = it.link ? objs.find(o=>o.id===it.link.id) : null;
+    if(twin && !done.has(twin.id)){
+      done.add(it.id); done.add(twin.id);
+      const groupSel = [it.id,twin.id].some(id=>id===state.selId || (state.multi&&state.multi.includes(id)));
+      // data-group lista os dois ids para mover juntos
+      blocks.push('<div class="lay-item lay-mirror'+(groupSel?' sel':'')+'" draggable="true" data-id="'+it.id+'" data-group="'+it.id+','+twin.id+'">'+
+        '<div class="lay-badge">espelhado</div>'+
+        rowHTML(it)+rowHTML(twin)+
+      '</div>');
+    } else {
+      done.add(it.id);
+      blocks.push('<div class="lay-item" draggable="true" data-id="'+it.id+'">'+rowHTML(it)+'</div>');
+    }
+  }
+  h+='<div class="lay-list" id="layList">'+blocks.join('')+'</div></div>';
   return h;
 }
 function bindLayersSection(){
@@ -1564,8 +1584,13 @@ function bindLayersSection(){
   if(up) up.onclick=()=>{ if(selId!=null){ moveLayer(selId,+1); } };
   if(dn) dn.onclick=()=>{ if(selId!=null){ moveLayer(selId,-1); } };
   if(!list) return;
+  // clique numa LINHA interna seleciona o objeto daquela linha
+  list.querySelectorAll('.lay-row').forEach(rw=>{
+    rw.addEventListener('click',ev=>{ ev.stopPropagation(); const id=+rw.dataset.id; setSelection([id]); renderUi(); renderPanel(); });
+  });
   list.querySelectorAll('.lay-item').forEach(row=>{
     const id=+row.dataset.id;
+    // clique no container (fora das linhas) seleciona o primeiro
     row.addEventListener('click',()=>{ setSelection([id]); renderUi(); renderPanel(); });
     row.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain', id); row.classList.add('drag'); });
     row.addEventListener('dragend',()=>row.classList.remove('drag'));
@@ -1577,21 +1602,51 @@ function bindLayersSection(){
       if(from!==to) dropLayer(from,to);
     });
   });
-  // manter o item selecionado visível (foco), rolando a lista até ele
   const selRow=list.querySelector('.lay-item.sel');
   if(selRow) selRow.scrollIntoView({block:'nearest'});
 }
-function moveLayer(id, dir){
-  // dir +1 = subir na pilha (mais para cima visualmente = índice maior)
+function mirrorGroupIds(id){
+  const it=state.items.find(x=>x.id===id);
+  if(it && it.link && it.link.id!=null){
+    const tw=state.items.find(x=>x.id===it.link.id);
+    if(tw) return [it.id, tw.id];
+  }
+  return [id];
+}
+function ensureMirrorAdjacent(){
+  // mantém pares espelhados sempre adjacentes na pilha (twin logo abaixo do item)
   const arr=state.items;
-  const idx=arr.findIndex(i=>i.id===id);
-  if(idx<0) return;
-  // achar o vizinho stroke adjacente na direção
-  let j=idx+dir;
-  while(j>=0 && j<arr.length && arr[j].kind!=='stroke') j+=dir;
-  if(j<0||j>=arr.length) return;
+  for(let i=0;i<arr.length;i++){
+    const it=arr[i];
+    if(it.kind==='stroke' && it.link && it.link.id!=null){
+      const ti=arr.findIndex(x=>x.id===it.link.id);
+      if(ti>=0 && Math.abs(ti-i)>1){
+        const [tw]=arr.splice(ti,1);
+        const ni=arr.findIndex(x=>x.id===it.id);
+        arr.splice(ni+1,0,tw);
+      }
+    }
+  }
+}
+function moveLayer(id, dir){
+  // dir +1 = subir na pilha (índice maior). Pares espelhados movem juntos como bloco.
+  const arr=state.items;
+  ensureMirrorAdjacent();
+  const group=mirrorGroupIds(id);
+  const gIdx=group.map(gid=>arr.findIndex(i=>i.id===gid)).filter(x=>x>=0).sort((a,b)=>a-b);
+  if(!gIdx.length) return;
+  const lo=gIdx[0], hi=gIdx[gIdx.length-1];
+  // vizinho (fora do grupo) na direção do movimento
+  let j = dir>0 ? hi+1 : lo-1;
+  if(j<0 || j>=arr.length) return;
+  const neighborId = arr[j].id;
   pushUndo();
-  const tmp=arr[idx]; arr[idx]=arr[j]; arr[j]=tmp;
+  const block=arr.slice(lo,hi+1);           // remove o bloco
+  arr.splice(lo, block.length);
+  const ni=arr.findIndex(x=>x.id===neighborId);
+  const insertAt = dir>0 ? ni+1 : ni;       // depois (subir) ou antes (descer) do vizinho
+  arr.splice(insertAt,0,...block);
+  ensureMirrorAdjacent();
   compose(); renderHits(); renderUi(); renderPanel(); autosave();
 }
 function dropLayer(fromId, toId){
@@ -1670,10 +1725,10 @@ function straightenStroke(s, u){
 }
 function beginSmoothSession(){
   const sel=selItem();
-  const targets = state.multi.length>1
+  const baseTargets = state.multi.length>1
     ? state.multi.slice()
     : ((sel && sel.kind==='stroke') ? [sel.id] : strokeItems().map(s=>s.id));
-  smoothSession={backup:snapshot(), targets, value:50, applied:false};
+  smoothSession={backup:snapshot(), targets:withTwins(baseTargets), value:50, applied:false};
 }
 function endSmoothSession(commit){
   if(!smoothSession) return;
@@ -1682,6 +1737,14 @@ function endSmoothSession(commit){
     restore(smoothSession.backup); autosave();
   }
   smoothSession=null;
+}
+function withTwins(ids){
+  const set=new Set(ids);
+  for(const id of ids){
+    const it=state.items.find(x=>x.id===id);
+    if(it && it.link && it.link.id!=null) set.add(it.link.id);
+  }
+  return [...set];
 }
 function applySmoothPreview(){
   if(!smoothSession) return;
@@ -1697,7 +1760,7 @@ function applySmoothPreview(){
     for(const s of tgt) straightenStroke(s, u);
   }
   for(const s of tgt)
-    if(s.link && smoothSession.targets.includes(s.link.id)) syncTwin(s);
+    if(s.link) syncTwin(s);
   compose(); renderHits(); renderUi();
 }
 function smoothRetarget(){
@@ -1713,11 +1776,12 @@ function smoothRetarget(){
   const sl=$('smLevel'); if(sl) sl.value=50;
   const sv=$('smLevelv'); if(sv) sv.textContent='0';
   const sel=selItem();
-  smoothSession.targets = state.multi.length>1
+  const baseTargets = state.multi.length>1
     ? state.multi.slice()
     : ((sel && sel.kind==='stroke')
       ? [sel.id]
       : state.items.filter(i=>i.kind==='stroke').map(i=>i.id));
+  smoothSession.targets = withTwins(baseTargets);
   compose(); renderHits(); renderUi(); renderPanel();
 }
 /* a UI da suavização agora vive no painel da direita (renderPanel) */
@@ -1872,6 +1936,22 @@ function secFill(){ // preenchimento (antigo balde): cor, opacidade, tolerância
     '<div class="hint">Clique dentro de uma forma fechada para preenchê-la. Em regiões abertas, usa tolerância para delimitar.</div>'+
   '</div>';
 }
+function secRef(){ // imagem de referência: carregar, ocultar, remover, opacidade, escala
+  const r=state.ref;
+  return '<div class="sec"><h3>Imagem de referência</h3>'+
+    '<div class="btn-row" style="margin-bottom:9px">'+
+      '<button class="btn sm primary" id="refLoad">Carregar imagem…</button>'+
+      (r.src?'<button class="btn sm" id="refToggle">'+(r.visible?'Ocultar':'Mostrar')+'</button>'+
+      '<button class="btn sm danger" id="refRemove">Remover</button>':'')+'</div>'+
+    (r.src?
+      '<div class="row"><label class="lbl">Opacidade</label>'+
+        '<input type="range" id="refOp" min="5" max="90" value="'+r.opacity+'"><span class="range-val" id="refOpv">'+r.opacity+'</span></div>'+
+      '<div class="row"><label class="lbl">Escala</label>'+
+        '<input type="range" id="refSc" min="10" max="300" value="'+Math.round(r.scale*100)+'"><span class="range-val" id="refScv">'+Math.round(r.scale*100)+'%</span></div>'
+      : '<div class="hint">Carregue uma imagem para usá-la como base de referência (calque). Depois arraste-a no canvas para posicionar.</div>')+
+    (r.src?'<div class="hint">Arraste a imagem no canvas para posicionar. A referência é só apoio visual — não entra na arte exportada nem é salva no projeto.</div>':'')+
+  '</div>';
+}
 function secNodes(it){ // editar nós: dobrar/dividir + adicionar/remover pontual + arrastar
   if(!it || it.kind!=='stroke') return '<div class="sec"><h3>Editar nós</h3><div class="hint">Toque num traço para editar seus nós.</div></div>';
   const add = nodeSubmode==='add', rem = nodeSubmode==='remove';
@@ -2002,6 +2082,10 @@ function renderPanel(){
   }
   if(state.tool==='modify'){
     P.innerHTML=panelHead()+secModify(it);
+    finishToolPanel(); return;
+  }
+  if(state.tool==='ref'){
+    P.innerHTML=panelHead()+secRef();
     finishToolPanel(); return;
   }
 

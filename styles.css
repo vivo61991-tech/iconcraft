@@ -607,3 +607,16 @@ body.eyedrop-capturing #workspace{touch-action:none}
 .node-rem{fill:#e5484d !important;stroke:#fff;cursor:pointer}
 .node-rem:hover{fill:#ff6b6b !important;r:9}
 .node-dim{opacity:.55}
+
+/* ============ camadas: container de par espelhado ============ */
+.lay-mirror{position:relative;padding:0;background:var(--bg2);border:1px solid var(--line)}
+.lay-mirror .lay-badge{
+  position:absolute;top:6px;right:8px;font-size:8.5px;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:6px;font-weight:700;z-index:1;
+}
+.lay-row{display:flex;align-items:center;gap:8px;padding:8px 9px;cursor:pointer}
+.lay-mirror .lay-row:first-of-type{border-bottom:1px dashed var(--line)}
+.lay-mirror .lay-row:hover{background:var(--bg3)}
+.lay-mirror.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+/* container simples (não espelhado) mantém o item interno colado */
+.lay-item:not(.lay-mirror) .lay-row{padding:0}
