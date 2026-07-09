@@ -16,6 +16,12 @@ const state = {
   gridOn: true,
   gridSpacing: 32,
   gridAbove: false,
+  marginPx: 0,          // margem (moldura interna) em px; 0 = desligada
+  snapOn: false,        // grade magnética (atrai objetos às linhas) — começa desativada
+  drawMode: 'free',     // 'free' | 'straight' | 'curve'
+  joinEnds: false,      // conectar pontas: funde traços cujas pontas se tocam
+  trimJoin: false,      // ajustar pontas: torna a junção perfeita (corta/completa)
+  showProps: false,     // "Ver propriedades dos objetos": HUD no topo com cor/posição/tamanho
   items: [],           // {id,kind:'stroke'|'fill', erase, raw, pts, closed, processed, nib, w, color, opacity, cap, fillOn, fill, fillOpacity, d}
   nextId: 1,
   tool: 'select',
@@ -127,8 +133,8 @@ function applyBoardSize(){
 }
 function drawGrid(){
   gGrid.innerHTML=''; underlay.innerHTML='';
-  if(!state.gridOn) return;
   const host = state.gridAbove ? gGrid : underlay;
+  if(!state.gridOn){ drawMargin(host); return; }
   const s=state.gridSpacing, n=state.size;
   let d='';
   for(let p=s;p<n;p+=s) d+='M'+p+' 0V'+n+'M0 '+p+'H'+n;
@@ -146,6 +152,22 @@ function drawGrid(){
   c.setAttribute('stroke-width','1.8'); c.setAttribute('fill','none');
   c.setAttribute('vector-effect','non-scaling-stroke');
   host.appendChild(c);
+  drawMargin(host);
+}
+function drawMargin(host){
+  // moldura de margem: retângulo interno mais grosso, exatamente sobre linhas da grade
+  const m=state.marginPx||0, n=state.size;
+  if(m<=0 || m*2>=n) return;
+  const g=host || (state.gridAbove ? gGrid : underlay);
+  const rect=document.createElementNS(SVGNS,'rect');
+  rect.setAttribute('x',m); rect.setAttribute('y',m);
+  rect.setAttribute('width',n-2*m); rect.setAttribute('height',n-2*m);
+  rect.setAttribute('fill','none');
+  rect.setAttribute('stroke','#5b9dff');
+  rect.setAttribute('stroke-opacity','.7');
+  rect.setAttribute('stroke-width','2.4');
+  rect.setAttribute('vector-effect','non-scaling-stroke');
+  g.appendChild(rect);
 }
 /* imagem de referência (nunca exportada) */
 function applyRef(){
@@ -596,7 +618,7 @@ function symmetrize(axis, targets){
 /* ============================================================
    DESENHO — caneta, pincel negativo, forma, espelho ao vivo
    ============================================================ */
-let drawing=null, liveA=null, liveB=null, pendingShapePts=null, shaping=null;
+let drawing=null, liveA=null, liveB=null, pendingShapePts=null, shaping=null, lineDraw=null, curveEdit=null, curveDrag=null;
 function previewD(pts,closed){
   return pts.length===2 ? polyPath(pts,false) : catmullPath(pts,closed,cornerIndices(pts,closed));
 }
@@ -670,12 +692,157 @@ function newStrokeItem(pts, erase){
   s.d=polyPath(s.pts, s.closed);
   return s;
 }
+function arcThrough(a, m, b, N){
+  // gera N+1 pontos de um arco de círculo que passa por a, m, b.
+  // se os 3 forem quase colineares, retorna a reta.
+  N=N||24;
+  const ax=a.x, ay=a.y, bx=b.x, by=b.y, mx=m.x, my=m.y;
+  const d=2*(ax*(by-my)+bx*(my-ay)+mx*(ay-by));
+  if(Math.abs(d)<1e-6){
+    const out=[]; for(let i=0;i<=N;i++){const t=i/N; out.push({x:ax+(bx-ax)*t,y:ay+(by-ay)*t});} return out;
+  }
+  const ux=((ax*ax+ay*ay)*(by-my)+(bx*bx+by*by)*(my-ay)+(mx*mx+my*my)*(ay-by))/d;
+  const uy=((ax*ax+ay*ay)*(mx-bx)+(bx*bx+by*by)*(ax-mx)+(mx*mx+my*my)*(bx-ax))/d;
+  const cx=ux, cy=uy;                       // centro do círculo
+  const r=Math.hypot(ax-cx, ay-cy);
+  let a0=Math.atan2(ay-cy, ax-cx);
+  let a1=Math.atan2(by-cy, bx-cx);
+  let am=Math.atan2(my-cy, mx-cx);
+  // normaliza para o arco percorrer a->m->b na direção certa
+  const norm=(x)=>{ while(x<0)x+=2*Math.PI; while(x>=2*Math.PI)x-=2*Math.PI; return x; };
+  a0=norm(a0); a1=norm(a1); am=norm(am);
+  let start=a0, end=a1;
+  // escolhe o sentido que passa por am
+  let cw = ( (norm(am-a0) <= norm(a1-a0)) );
+  const out=[];
+  for(let i=0;i<=N;i++){
+    const t=i/N;
+    let ang;
+    if(cw){ ang = a0 + norm(a1-a0)*t; }
+    else  { ang = a0 - norm(a0-a1)*t; }
+    out.push({x:cx+r*Math.cos(ang), y:cy+r*Math.sin(ang)});
+  }
+  return out;
+}
+// --------- conectar pontas: funde traços cujas pontas se tocam ---------
+function endpointsOf(it){
+  const p=it.pts; if(!p||p.length<2) return null;
+  return {first:p[0], last:p[p.length-1]};
+}
+// distância de um ponto ao segmento
+function distToSeg(p,a,b){
+  const dx=b.x-a.x, dy=b.y-a.y; const L2=dx*dx+dy*dy||1e-9;
+  let t=((p.x-a.x)*dx+(p.y-a.y)*dy)/L2; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(p.x-(a.x+dx*t), p.y-(a.y+dy*t));
+}
+// tenta conectar o traço "s" (recém-criado) a um traço aberto existente.
+// retorna o item resultante (fundido) ou o próprio s.
+function tryJoinEnds(s){
+  if(!state.joinEnds) return s;
+  if(s.erase || s.closed || !s.pts || s.pts.length<2) return s;
+  const tol=Math.max(14, s.w*1.2 + 8);   // "muito próxima": tolera imprecisão do usuário
+  const se=endpointsOf(s);
+  // procura candidato: outro stroke aberto cuja ponta esteja perto de uma ponta de s
+  for(let i=state.items.length-1;i>=0;i--){
+    const o=state.items[i];
+    if(o===s || o.kind!=='stroke' || o.erase || o.closed) continue;
+    if(o.id===s.id) continue;
+    if(!o.pts || o.pts.length<2) continue;
+    if(s.link && o.id===s.link.id) continue;   // não funde com o próprio espelho
+    const oe=endpointsOf(o);
+    // 4 combinações de pontas
+    const combos=[
+      ['last','first'],  // s.last -> o.first : s + o
+      ['last','last'],   // s.last -> o.last  : s + reverse(o)
+      ['first','last'],  // s.first-> o.last  : o + s
+      ['first','first']  // s.first-> o.first : reverse(o) + s
+    ];
+    for(const [sk,ok] of combos){
+      const d=Math.hypot(se[sk].x-oe[ok].x, se[sk].y-oe[ok].y);
+      if(d<=tol){
+        return fuseStrokes(o, s, sk, ok);
+      }
+    }
+  }
+  // também: se as duas pontas de s tocam a mesma peça (fechar a própria), fecha
+  const dSelf=Math.hypot(se.first.x-se.last.x, se.first.y-se.last.y);
+  if(dSelf<=tol && s.pts.length>6){ s.closed=true; rebuildPath(s); }
+  return s;
+}
+// funde o->s numa peça só. sk/ok indicam quais pontas se encontram.
+function fuseStrokes(o, s, sk, ok){
+  // monta a sequência de pontos de o + s conectando as pontas certas
+  let op=o.pts.map(p=>({...p}));
+  let sp=s.pts.map(p=>({...p}));
+  // queremos: [...o até a ponta 'ok'] emendado com [s a partir da ponta 'sk']
+  // orienta o para terminar em 'ok'
+  if(ok==='first') op.reverse();       // agora o termina no que era 'first'
+  // orienta s para começar em 'sk'
+  if(sk==='last') sp.reverse();        // agora s começa no que era 'last'
+  let pts=op.concat(sp);
+
+  if(state.trimJoin) pts=trimJunction(pts, op.length);
+
+  // resolve a junção geral (remove duplicados muito próximos)
+  pts=dedupePts(pts);
+
+  o.pts=pts; o.raw=pts.map(p=>({...p}));
+  o.processed=true;
+  // se virou uma volta fechada, fecha
+  const g=Math.hypot(pts[0].x-pts[pts.length-1].x, pts[0].y-pts[pts.length-1].y);
+  o.closed = g < Math.max(14, o.w*1.2+8) && pts.length>6;
+  rebuildPath(o);
+  // remove s (e o espelho de s, se houver) — a peça agora é "o"
+  removeItemById(s.id);
+  if(s.link && s.link.id!=null) removeItemById(s.link.id);
+  state.selId=o.id; state.multi=[];
+  return o;
+}
+function dedupePts(pts){
+  const out=[pts[0]];
+  for(let i=1;i<pts.length;i++){
+    const a=out[out.length-1], b=pts[i];
+    if(Math.hypot(a.x-b.x,a.y-b.y)>0.6) out.push(b);
+  }
+  return out;
+}
+// "ajustar pontas": limpa a região da junção (corta excesso / completa a costura)
+function trimJunction(pts, joinIdx){
+  // joinIdx = índice onde s começa (a costura fica entre joinIdx-1 e joinIdx)
+  if(joinIdx<2 || joinIdx>pts.length-2) return pts;
+  const A=pts[joinIdx-1], B=pts[joinIdx];
+  const mid={x:(A.x+B.x)/2, y:(A.y+B.y)/2};
+  // funde os dois pontos da costura num ponto médio (elimina rebarba/degrau)
+  const out=pts.slice(0,joinIdx-1);
+  out.push(mid);
+  out.push(...pts.slice(joinIdx+1));
+  // suaviza levemente ao redor da costura para não deixar quina dura
+  const j=out.findIndex(p=>p===mid);
+  if(j>0 && j<out.length-1){
+    const a=out[j-1], b=out[j], c=out[j+1];
+    out[j]={x:(a.x+2*b.x+c.x)/4, y:(a.y+2*b.y+c.y)/4};
+  }
+  return out;
+}
+function removeItemById(id){
+  const i=state.items.findIndex(x=>x.id===id);
+  if(i>=0) state.items.splice(i,1);
+}
 function attachDrawEvents(){
   const board=$('board');
   board.addEventListener('pointerdown',e=>{
     if(state.tool==='pan'){ panPointerDown(e); return; }
     if(state.tool==='ref' && e.target.id==='refImg'){ startRefDrag(e); return; }
     const t=state.tool;
+    // ajuste de curvatura: arrastar puxa o meio da linha curva recém-criada
+    if(t==='draw' && state.drawMode==='curve' && curveEdit){
+      const it=state.items.find(x=>x.id===curveEdit.id);
+      if(it){
+        board.setPointerCapture(e.pointerId);
+        curveDrag={id:it.id, a:curveEdit.a, b:curveEdit.b};
+        e.preventDefault(); return;
+      } else { curveEdit=null; }
+    }
     if(t==='bucket'){ doBucket(e); return; }
     if(t==='shape'){
       if(e.button!==undefined && e.button!==0) return;
@@ -689,12 +856,38 @@ function attachDrawEvents(){
     if(t!=='draw' && t!=='erase') return;
     if(e.button!==undefined && e.button!==0) return;
     board.setPointerCapture(e.pointerId);
+    // modos LINHA RETA e CURVA (só no lápis): traça entre início e fim
+    if(t==='draw' && (state.drawMode==='straight' || state.drawMode==='curve')){
+      curveEdit=null;   // nova linha: encerra ajuste da curva anterior
+      const p=boardPoint(e);
+      lineDraw={a:p, b:p, mode:state.drawMode};
+      liveA=makeLive(false);
+      if(state.mirror!=='off'){ liveB=makeLive(false); liveB.classList.add('mirror-live'); }
+      e.preventDefault(); return;
+    }
     drawing={pts:[boardPoint(e)], mode:t};
     liveA=makeLive(t==='erase');
     if(state.mirror!=='off'){ liveB=makeLive(t==='erase'); liveB.classList.add('mirror-live'); }
     e.preventDefault();
   });
   board.addEventListener('pointermove',e=>{
+    if(curveDrag){
+      const it=state.items.find(x=>x.id===curveDrag.id); if(!it) { curveDrag=null; return; }
+      const m=boardPoint(e);
+      const pts=arcThrough(curveDrag.a, m, curveDrag.b, 40);
+      it.pts=pts.map(p=>({...p})); it.raw=pts.map(p=>({...p})); it.linear=false;
+      it.lineEnds=[{...curveDrag.a},{...curveDrag.b}]; it._curveMid={...m};
+      rebuildPath(it); if(it.link) syncTwin(it);
+      if(!nodeRAF) nodeRAF=requestAnimationFrame(()=>{ nodeRAF=null; compose(); renderUi(); });
+      return;
+    }
+    if(lineDraw){
+      lineDraw.b=boardPoint(e);
+      const pts=[lineDraw.a, lineDraw.b];
+      updateLive(liveA, pts);
+      if(liveB) updateLive(liveB, pts.map(mirrorPoint));
+      return;
+    }
     if(shaping){
       shaping.b=boardPoint(e);
       const {pts,closed}=fitShape(state.shapeKind,[shaping.a,shaping.b]);
@@ -712,6 +905,51 @@ function attachDrawEvents(){
     }
   });
   const finish=()=>{
+    if(curveDrag){
+      const it=state.items.find(x=>x.id===curveDrag.id);
+      curveDrag=null;
+      if(it){
+        const joined=tryJoinEnds(it);   // conecta pontas após ajustar a curva
+        if(joined!==it){ curveEdit=null; state.selId=joined.id; }
+        compose(); renderHits(); renderPanel(); autosave();
+      }
+      return;
+    }
+    if(lineDraw){
+      if(liveA){liveA.remove();liveA=null;}
+      if(liveB){liveB.remove();liveB=null;}
+      const {a,b,mode}=lineDraw; lineDraw=null;
+      if(Math.hypot(b.x-a.x,b.y-a.y)<4) return;   // muito curto, ignora
+      pushUndo();
+      // amostra a reta em vários pontos (para o modo curva poder encurvar depois)
+      const N=24, pts=[];
+      for(let i=0;i<=N;i++){ const t=i/N; pts.push({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t}); }
+      const s={id:state.nextId++, kind:'stroke', erase:false,
+        raw:pts.map(p=>({...p})), pts:pts.map(p=>({...p})),
+        closed:false, processed:true, linear:true, d:null, ...pendingStyle,
+        lineKind:(mode==='curve'?'curve':'straight'), lineEnds:[{...a},{...b}]};
+      rebuildPath(s);
+      state.items.push(s);
+      if(state.mirror!=='off'){
+        const m=JSON.parse(JSON.stringify(s)); m.id=state.nextId++;
+        m.pts=m.pts.map(mirrorPoint).reverse(); m.raw=m.raw.map(mirrorPoint).reverse();
+        m.nib=mirrorNib(s.nib);
+        if(m.lineEnds) m.lineEnds=m.lineEnds.map(mirrorPoint).reverse();
+        rebuildPath(m);
+        s.link={id:m.id,axis:state.mirror}; m.link={id:s.id,axis:state.mirror};
+        state.items.push(m);
+      }
+      state.selId=s.id; state.multi=[];
+      if(mode==='curve'){
+        // curva: só conecta depois do ajuste (ao puxar o meio ou ao encerrar)
+        curveEdit={id:s.id, a:{...a}, b:{...b}};
+      } else {
+        // reta: conecta pontas imediatamente (se habilitado)
+        const joined=tryJoinEnds(s); state.selId=joined.id;
+      }
+      compose(); renderHits(); renderUi(); renderPanel(); autosave();
+      return;
+    }
     if(shaping){
       if(liveA){liveA.remove();liveA=null;}
       if(liveB){liveB.remove();liveB=null;}
@@ -757,8 +995,10 @@ function attachDrawEvents(){
       m.link={id:s.id,axis:state.mirror};
       state.items.push(m);
     }
-    // seleciona o traço recém-criado para permitir ajuste ao vivo pelo painel aberto
-    state.selId=s.id; state.multi=[];
+    // conectar pontas (se habilitado): funde com traço cuja ponta esteja próxima
+    const joined=tryJoinEnds(s);
+    // seleciona o traço recém-criado (ou o fundido) para ajuste ao vivo pelo painel
+    state.selId=joined.id; state.multi=[];
     compose(); renderHits(); renderUi(); autosave();
   };
   board.addEventListener('pointerup',finish);
@@ -959,6 +1199,10 @@ function doBucket(e){
 /* ============================================================
    SELEÇÃO, NÓS, REFERÊNCIA, PROCESSAMENTO, UNDO
    ============================================================ */
+function lastObject(){
+  for(let i=state.items.length-1;i>=0;i--){ if(state.items[i].kind==='stroke') return state.items[i]; }
+  return null;
+}
 function selItem(){ return state.items.find(i=>i.id===state.selId); }
 function setSelection(ids){
   ids=[...new Set(ids)].filter(id=>state.items.some(i=>i.id===id && i.kind==='stroke'));
@@ -1015,6 +1259,8 @@ function renderHits(){
 }
 function renderUi(){
   updateOrderFabs();
+  updateColorBtn();
+  updatePropsHud();
   gUi.innerHTML='';
   if(state.multi && state.multi.length>1){
     const members=state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id));
@@ -1331,6 +1577,36 @@ function startRotateDrag(it,ev){
   document.addEventListener('pointerup',up);
 }
 /* --------- mover elemento arrastando --------- */
+// linhas de snap = grade + margem (se houver)
+function snapLines(){
+  const s=state.gridSpacing||32, n=state.size;
+  const xs=[], ys=[];
+  for(let p=0;p<=n;p+=s){ xs.push(p); ys.push(p); }
+  xs.push(n/2); ys.push(n/2);              // eixos centrais
+  if(state.marginPx>0){                     // bordas da margem
+    xs.push(state.marginPx, n-state.marginPx);
+    ys.push(state.marginPx, n-state.marginPx);
+  }
+  return {xs, ys};
+}
+// dado uma bbox candidata, retorna o ajuste (ox,oy) para encostar na linha mais próxima
+function snapAdjust(bb){
+  if(!state.snapOn) return {ox:0, oy:0};
+  const {xs, ys}=snapLines();
+  const tol=Math.max(6, state.gridSpacing*0.35);   // raio de atração
+  const near=(vals, targets)=>{
+    let best=0, bd=1e9;
+    for(const v of vals) for(const t of targets){
+      const d=Math.abs(v-t);
+      if(d<bd){ bd=d; best=t-v; }
+    }
+    return bd<=tol ? best : 0;
+  };
+  // tenta alinhar bordas esquerda/direita/centro em X; topo/base/centro em Y
+  const ox=near([bb.x0, bb.x1, (bb.x0+bb.x1)/2], xs);
+  const oy=near([bb.y0, bb.y1, (bb.y0+bb.y1)/2], ys);
+  return {ox, oy};
+}
 function startMoveDrag(it,ev){
   const start=boardPoint(ev);
   let started=false, orig=null;
@@ -1343,8 +1619,15 @@ function startMoveDrag(it,ev){
       pushUndo();
       orig={pts:it.pts.map(q=>({...q})), raw:it.raw.map(q=>({...q}))};
     }
-    it.pts=orig.pts.map(q=>({x:q.x+dx,y:q.y+dy}));
-    it.raw=orig.raw.map(q=>({x:q.x+dx,y:q.y+dy}));
+    let mvx=dx, mvy=dy;
+    if(state.snapOn){
+      // bbox candidata após o movimento bruto
+      const cand=ptsBBox(orig.pts.map(q=>({x:q.x+dx,y:q.y+dy})));
+      const {ox,oy}=snapAdjust(cand);
+      mvx+=ox; mvy+=oy;
+    }
+    it.pts=orig.pts.map(q=>({x:q.x+mvx,y:q.y+mvy}));
+    it.raw=orig.raw.map(q=>({x:q.x+mvx,y:q.y+mvy}));
     rebuildPath(it); syncTwin(it);
     if(!nodeRAF) nodeRAF=requestAnimationFrame(()=>{ nodeRAF=null; compose(); renderUi(); });
   };
@@ -1418,9 +1701,16 @@ function startGroupMove(ev){
       started=true; pushUndo();
       orig=members.map(m=>({m, pts:m.pts.map(q=>({...q})), raw:m.raw.map(q=>({...q}))}));
     }
+    let mvx=dx, mvy=dy;
+    if(state.snapOn){
+      let X0=1e9,Y0=1e9,X1=-1e9,Y1=-1e9;
+      for(const o of orig) for(const q of o.pts){ X0=Math.min(X0,q.x+dx);Y0=Math.min(Y0,q.y+dy);X1=Math.max(X1,q.x+dx);Y1=Math.max(Y1,q.y+dy); }
+      const adj=snapAdjust({x0:X0,y0:Y0,x1:X1,y1:Y1});
+      mvx+=adj.ox; mvy+=adj.oy;
+    }
     for(const o of orig){
-      o.m.pts=o.pts.map(q=>({x:q.x+dx,y:q.y+dy}));
-      o.m.raw=o.raw.map(q=>({x:q.x+dx,y:q.y+dy}));
+      o.m.pts=o.pts.map(q=>({x:q.x+mvx,y:q.y+mvy}));
+      o.m.raw=o.raw.map(q=>({x:q.x+mvx,y:q.y+mvy}));
       rebuildPath(o.m); syncTwin(o.m);
     }
     if(!nodeRAF) nodeRAF=requestAnimationFrame(()=>{ nodeRAF=null; compose(); renderUi(); });
@@ -1493,8 +1783,17 @@ function refreshBrushCursor(){
 function setTool(t, fromList){
   // sair da ferramenta de suavização confirma o que estiver aplicado
   if(state.tool==='smooth' && t!=='smooth') endSmoothSession(true);
+  curveEdit=null; curveDrag=null;   // encerra ajuste de curva pendente
   const prev=state.tool;
   state.tool=t;
+  // ferramentas que operam sobre um objeto: se nada selecionado, pega o último
+  if(['modify','nodes'].includes(t)){
+    const hasSel = state.selId!=null || (state.multi && state.multi.length);
+    if(!hasSel){
+      const last=lastObject();
+      if(last){ state.selId=last.id; state.multi=[]; }
+    }
+  }
   if(t==='smooth' && prev!=='smooth'){
     if(!strokeItems().length){ toast('Desenhe algum traço primeiro.'); state.tool=prev; return; }
     beginSmoothSession();
@@ -1538,14 +1837,70 @@ let mobileMenuOpen=false;
 const ICON_SELECT='<svg viewBox="0 0 24 24"><path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2 1-3.2-7.4L7 18.5z"/></svg>';
 const ICON_PAN='<svg viewBox="0 0 24 24"><path d="M13 6v5h5V7.75L22.25 12 18 16.25V13h-5v5h3.25L12 22.25 7.75 18H11v-5H6v3.25L1.75 12 6 7.75V11h5V6H7.75L12 1.75 16.25 6z"/></svg>';
 const CREATE_TOOLS=['draw','erase','shape','bucket','nodes','ref'];
+function openGlobalColors(){
+  let ov=document.getElementById('gcPop'); if(ov) ov.remove();
+  const line = state.globalLine || pendingStyle.color || '#222222';
+  const fillOn = state.globalFill!=null || pendingStyle.fillOn;
+  const fill = state.globalFill || pendingStyle.fill || '#5AC8FA';
+  ov=document.createElement('div'); ov.id='gcPop';
+  ov.innerHTML='<div class="help-card" style="max-width:300px">'+
+    '<button class="help-close" id="gcClose">✕</button>'+
+    '<div style="font-weight:600;margin-bottom:14px">Cores ativas</div>'+
+    '<div class="row"><label class="lbl">Linha</label>'+colorFieldX('gcLine', line, 'gcLineOff')+'</div>'+
+    '<div class="row"><label class="lbl">Preenchimento</label>'+colorFieldX('gcFill', fillOn?fill:null, 'gcFillClear')+'</div>'+
+    '<div class="hint" style="margin-top:6px">Estas cores valem para os próximos objetos e para o objeto selecionado.</div>'+
+  '</div>';
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
+  document.getElementById('gcClose').onclick=close;
+  // aplica a cor no global, no pendingStyle e no objeto selecionado (se houver)
+  const applyLine=v=>{ state.globalLine=v; pendingStyle.color=v; pendingStyle.lineOff=false;
+    const it=selItem(); if(it&&it.kind==='stroke'){ it.color=v; it.lineOff=false; if(it.link)syncTwin(it); rebuildPath(it);} 
+    updateColorBtn(); refreshBrushCursor(); compose(); renderHits(); renderUi(); };
+  const applyFill=v=>{ state.globalFill=v; pendingStyle.fill=v; pendingStyle.fillOn=true;
+    const it=selItem(); if(it&&it.kind==='stroke'){ it.fill=v; it.fillOn=true; if(it.link)syncTwin(it); rebuildPath(it);} 
+    updateColorBtn(); compose(); renderHits(); renderUi(); };
+  bindColorField('gcLine', ()=>line, applyLine);
+  const lo=document.getElementById('gcLineOff'); if(lo) lo.onclick=()=>{ pendingStyle.lineOff=true; const it=selItem(); if(it){it.lineOff=true;rebuildPath(it);} updateColorBtn(); compose(); renderHits(); };
+  bindColorField('gcFill', ()=>fill, applyFill);
+  const fc=document.getElementById('gcFillClear'); if(fc) fc.onclick=()=>{ state.globalFill=null; pendingStyle.fillOn=false; const it=selItem(); if(it){it.fillOn=false;rebuildPath(it);} updateColorBtn(); compose(); renderHits(); };
+}
+function updatePropsHud(){
+  const hud=$('propsHud'); if(!hud) return;
+  if(!state.showProps){ hud.style.display='none'; return; }
+  const it=selItem();
+  if(!it || it.kind!=='stroke'){ hud.style.display='none'; return; }
+  hud.style.display='flex';
+  const dot=$('propsDot').querySelector('circle');
+  dot.setAttribute('fill', it.fillOn? it.fill : 'transparent');
+  dot.setAttribute('stroke', it.lineOff? '#888' : it.color);
+  dot.style.fillOpacity = it.fillOn? '1':'0.12';
+  const m=layerMetrics(it);
+  const fmt=n=>(n>0?'+':'')+n;
+  $('propsText').innerHTML='X <b>'+fmt(m.h)+'</b>  Y <b>'+fmt(m.v)+'</b>  L <b>'+m.w+'</b>  A <b>'+m.ht+'</b>';
+}
+function updateColorBtn(){
+  const c=$('colorBtnCirc'); if(!c) return;
+  const line = state.globalLine || pendingStyle.color || '#222';
+  const fill = state.globalFill || (pendingStyle.fillOn?pendingStyle.fill:null);
+  c.setAttribute('fill', fill || 'transparent');
+  c.setAttribute('stroke', line);
+  // se não há preenchimento, mostra o círculo vazado (só contorno)
+  c.style.fillOpacity = fill ? '1' : '0.12';
+}
 function updateFab(){
+  updateColorBtn();
   // FAB inferior esquerdo: ferramentas de criação
   const fab=$('mobileFab');
   if(fab && !mobileMenuOpen){
-    // sempre exibe a última ferramenta de criação; ativa só quando ela é a ferramenta atual
-    const btn=document.querySelector('.tool[data-tool="'+state.lastCreate+'"]');
+    // se a ferramenta atual for uma que "mora" no menu esquerdo (modify/smooth/layers),
+    // o FAB mostra ELA e fica ativo; senão mostra a última ferramenta de criação.
+    const LEFT_ACTIVE=['modify','smooth','layers'];
+    const shown = LEFT_ACTIVE.includes(state.tool) ? state.tool : state.lastCreate;
+    const btn=document.querySelector('.tool[data-tool="'+shown+'"]');
     if(btn) fab.innerHTML=btn.querySelector('svg').outerHTML;
-    fab.classList.toggle('fab-active', CREATE_TOOLS.includes(state.tool));
+    fab.classList.toggle('fab-active', CREATE_TOOLS.includes(state.tool) || LEFT_ACTIVE.includes(state.tool));
   }
   // FAB superior direito: navegação — mostra o modo memorizado (select/pan),
   // sem mudar quando uma ferramenta de criação é ativada embaixo
@@ -1587,7 +1942,7 @@ function openProps(mode){
   renderPanel();                 // monta o conteúdo do modo atual (props ou env)
   const P=$('panel'); if(P) P.scrollTop=0;
 }
-function closeProps(){ document.body.classList.remove('props-open'); }
+function closeProps(){ document.body.classList.remove('props-open'); updateFab(); }
 function toggleEnv(){
   if(document.body.classList.contains('props-open') && panelMode==='env') closeProps();
   else openProps('env');
@@ -1610,6 +1965,12 @@ $('mobileNav').onclick=()=>{
 };
 $('mobileProps').onclick=toggleEnv;
 $('panelReopen').onclick=()=>openProps('props');
+const _cb=$('colorBtn'); if(_cb) _cb.onclick=()=>openGlobalColors();
+const _la=$('leftArrow'); if(_la) _la.onclick=()=>{
+  // abre o mesmo menu de ferramentas do botão inferior esquerdo
+  if(mobileMenuOpen){ closeMobileMenu(); return; }
+  openMobileMenu();
+};
 $('btnSaveTool').onclick=e=>{ e.stopPropagation(); if(mobileMenuOpen) closeMobileMenu(); openPopMenu($('exportMenu'), $('btnSaveTool')); };
 
 /* ---------------- Painel de camadas ---------------- */
@@ -2116,9 +2477,16 @@ function finishToolPanel(){
   applyPanelMode();
 }
 // ---------- geradores de seção reutilizáveis ----------
-function secPencil(){ // lápis: pontas, espessura, cor da linha, opacidade
+function secPencil(){ // lápis: modo (livre/reta/curva) + pontas, espessura, cor, opacidade
   const ps=pendingStyle;
-  return '<div class="sec">'+secHeadInfo('Lápis','','Desenhe à mão livre. Escolha a ponta (redonda ou caligráfica), a espessura, a cor da linha, o formato das pontas e a opacidade. Essas opções valem para os próximos traços.')+
+  const dm=state.drawMode||'free';
+  return '<div class="sec">'+secHeadInfo('Lápis','','Modos: "Livre" desenha à mão; "Reta" faz uma linha reta entre onde você toca e solta; "Curva" faz a reta e depois deixa você puxar o meio para encurvar (curva perfeita). Abaixo: ponta, espessura, cor, pontas e opacidade.')+
+    '<div class="row"><label class="lbl">Modo</label><div class="seg" id="pdMode">'+
+      '<button data-v="free" class="'+(dm==='free'?'on':'')+'">Livre</button>'+
+      '<button data-v="straight" class="'+(dm==='straight'?'on':'')+'">Reta</button>'+
+      '<button data-v="curve" class="'+(dm==='curve'?'on':'')+'">Curva</button></div></div>'+
+    '<label class="chk"><input type="checkbox" id="pdJoin"'+(state.joinEnds?' checked':'')+'>Conectar pontas (funde linhas que se tocam)</label>'+
+    (state.joinEnds?'<label class="chk" style="margin-left:16px"><input type="checkbox" id="pdTrim"'+(state.trimJoin?' checked':'')+'>Ajustar pontas (junção perfeita: corta/completa)</label>':'')+
     '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',ps.nib)+'</div>'+
     (ps.nib==='round'
       ? '<div class="row"><label class="lbl">Espessura</label>'+
@@ -2365,7 +2733,12 @@ function envSectionsHTML(){
     '<label class="chk"><input type="checkbox" id="cvGrid"'+(state.gridOn?' checked':'')+'>Mostrar grade</label>'+
     '<label class="chk"><input type="checkbox" id="cvGridAbove"'+(state.gridAbove?' checked':'')+'>Grade por cima do desenho</label>'+
     '<div class="row"><label class="lbl">Espaço grade</label><select class="inp" id="cvGridSp" style="flex:1">'+
-      [16,32,64,128].map(v=>'<option value="'+v+'"'+(state.gridSpacing===v?' selected':'')+'>'+v+' px</option>').join('')+'</select></div>'+
+      [8,16,32,64,128].map(v=>'<option value="'+v+'"'+(state.gridSpacing===v?' selected':'')+'>'+v+' px</option>').join('')+'</select></div>'+
+    '<div class="row"><label class="lbl">Margem</label><select class="inp" id="cvMargin" style="flex:1">'+
+      ['<option value="0"'+(state.marginPx===0?' selected':'')+'>Sem margem</option>'].concat(
+      [8,16,24,32,48,64,96,128].map(v=>'<option value="'+v+'"'+(state.marginPx===v?' selected':'')+'>'+v+' px</option>')).join('')+'</select></div>'+
+    '<label class="chk"><input type="checkbox" id="cvSnap"'+(state.snapOn?' checked':'')+'>Grade magnética (atrai objetos às linhas)</label>'+
+    '<label class="chk"><input type="checkbox" id="cvShowProps"'+(state.showProps?' checked':'')+'>Ver propriedades dos objetos (cor, posição e tamanho no topo)</label>'+
     '<div class="row"><label class="lbl">Fundo</label>'+
       '<input type="range" id="cvBg" min="0" max="100" value="'+bgLevel()+'"><span class="range-val" id="cvBgv">'+bgLevel()+'</span></div>'+
     '<div class="hint" style="margin:-4px 0 8px">Do preto (0) ao branco (100), só para enxergar o objeto — a exportação PNG/SVG continua com fundo transparente.</div>'+
@@ -2575,6 +2948,9 @@ function bindPanel(it){
   bindRange('pdOp',v=>{pendingStyle.opacity=v; liveApply(it=>{it.opacity=v;});});
   bindRange('pdCornerR',v=>{ state.cornerR=v/100; liveApply(it=>{ if(it.shapeKind==='rrect' && it.shapeBox){ it.cornerR=v/100; regenRRect(it, it.shapeBox); } }); });
   const pdcap=$('pdCap'); if(pdcap) pdcap.querySelectorAll('button').forEach(b=>b.onclick=()=>{pendingStyle.cap=b.dataset.v; liveApply(it=>{it.cap=b.dataset.v;}); renderPanel();refreshBrushCursor();});
+  const pdmode=$('pdMode'); if(pdmode) pdmode.querySelectorAll('button').forEach(b=>b.onclick=()=>{ state.drawMode=b.dataset.v; curveEdit=null; renderPanel(); });
+  const pdjoin=$('pdJoin'); if(pdjoin) pdjoin.onchange=e=>{ state.joinEnds=e.target.checked; if(!state.joinEnds) state.trimJoin=false; renderPanel(); autosave(); };
+  const pdtrim=$('pdTrim'); if(pdtrim) pdtrim.onchange=e=>{ state.trimJoin=e.target.checked; autosave(); };
   bindColorField('bkColor', ()=>state.bucket.color, v=>{state.bucket.color=v;});
   bindRange('bkOp',v=>{state.bucket.opacity=v;});
   bindRange('bkTol',v=>{state.bucket.tolerance=v;});
@@ -2632,6 +3008,9 @@ function bindPanel(it){
   const cvg=$('cvGrid'); if(cvg) cvg.onchange=e=>{state.gridOn=e.target.checked;drawGrid();autosave();};
   const cvgs=$('cvGridSp'); if(cvgs) cvgs.onchange=e=>{state.gridSpacing=parseInt(e.target.value);drawGrid();autosave();};
   const ga=$('cvGridAbove'); if(ga) ga.onchange=e=>{state.gridAbove=e.target.checked;drawGrid();autosave();};
+  const cvm=$('cvMargin'); if(cvm) cvm.onchange=e=>{state.marginPx=parseInt(e.target.value);drawGrid();autosave();};
+  const cvsn=$('cvSnap'); if(cvsn) cvsn.onchange=e=>{state.snapOn=e.target.checked;autosave();};
+  const cvsp=$('cvShowProps'); if(cvsp) cvsp.onchange=e=>{state.showProps=e.target.checked;updatePropsHud();autosave();};
   bindRange('cvBg',v=>{ localStorage.setItem(BG_KEY,String(Math.round(v))); applyBg(); });
   bindRange('cvZoom',v=>{state.zoom=v/100;applyBoardSize();applyRef();},'%');
   const zf=$('cvZoomFit'); if(zf) zf.onclick=zoomFit;
@@ -2715,6 +3094,7 @@ $('btnExportPng').onclick=()=>{
 function projectData(){
   return {app:'iconcraft',version:2,
     size:state.size,gridOn:state.gridOn,gridSpacing:state.gridSpacing,gridAbove:state.gridAbove,
+    marginPx:state.marginPx,snapOn:state.snapOn,joinEnds:state.joinEnds,trimJoin:state.trimJoin,
     items:state.items,nextId:state.nextId,bucket:state.bucket};
 }
 function migrate(j){
@@ -2728,6 +3108,8 @@ function loadProjectData(raw){
   if(j.app!=='iconcraft') throw new Error('Arquivo não é um projeto do IconCraft.');
   state.size=j.size||512; state.gridOn=j.gridOn!==false; state.gridSpacing=j.gridSpacing||32;
   state.gridAbove=!!j.gridAbove;
+  state.marginPx=j.marginPx||0; state.snapOn=!!j.snapOn;
+  state.joinEnds=!!j.joinEnds; state.trimJoin=!!j.trimJoin;
   state.items=j.items||[];
   state.items.forEach(i=>{ if(i.kind==='stroke' && i.w2==null) i.w2=4; });
   if(j.bucket) Object.assign(state.bucket,j.bucket);
@@ -3341,13 +3723,14 @@ $('board').addEventListener('pointerdown',e=>{
 
   // MODO MODIFICAR: toca noutro objeto = alterna alvo; permite arrastar/manipular
   if(state.tool==='modify'){
-    if(hit){ setSelection([hit.id]); renderUi(); renderPanel(); startMoveDrag(hit, e); }
+    if(hit){ setSelection([hit.id]); if(!document.body.classList.contains('props-open')) openProps('props'); else renderPanel(); renderUi(); startMoveDrag(hit, e); }
     return;
   }
 
   // MODO SUAVIZAR: toque isola o traço; arraste m=pan; pinça=zoom (ferramenta segue ativa)
   if(state.tool==='smooth'){
     smTap={pt:{x:e.clientX,y:e.clientY,id:e.pointerId}, moved:false, hit:hit};
+    if(hit && !document.body.classList.contains('props-open')) openProps('props');
     panPointerDown(e);
     return;
   }
