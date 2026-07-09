@@ -180,15 +180,9 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 @keyframes tin{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 
 /* ---------- responsivo ---------- */
-@media (max-width:860px){
-  main{grid-template-columns:52px 1fr;grid-template-rows:1fr auto}
-  #panel{
-    grid-column:1/-1;border-left:none;border-top:1px solid var(--line);
-    max-height:42vh;
-  }
+@media (max-width:860px) and (min-width:768px){
   header{flex-wrap:wrap;height:auto;padding:8px 10px}
-  body{grid-template-rows:auto 1fr}
-  .tool{width:40px;height:40px}
+  .tool{width:42px;height:42px}
 }
 
 /* ============ v2 — camadas do board ============ */
@@ -620,3 +614,74 @@ body.eyedrop-capturing #workspace{touch-action:none}
 .lay-mirror.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
 /* container simples (não espelhado) mantém o item interno colado */
 .lay-item:not(.lay-mirror) .lay-row{padding:0}
+
+/* ============ botão de informação + popup de ajuda ============ */
+.sec-info{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:19px;height:19px;border-radius:50%;margin-left:8px;
+  background:var(--bg3);border:1px solid var(--line2);color:var(--muted);
+  font-size:11px;font-weight:700;font-style:italic;font-family:Georgia,serif;cursor:pointer;vertical-align:middle;
+}
+.sec-info:hover{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+#helpPop{position:fixed;inset:0;z-index:700;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.5);padding:24px}
+.help-card{position:relative;background:var(--bg1);border:1px solid var(--line2);border-radius:16px;
+  max-width:340px;width:100%;padding:48px 20px 20px;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+.help-close{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:50%;
+  background:var(--bg3);border:1px solid var(--line2);color:var(--text);font-size:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center}
+.help-close:hover{background:var(--danger,#e5484d);color:#fff}
+.help-body{font-size:13px;line-height:1.6;color:var(--text)}
+
+/* alça de arredondamento do retângulo */
+.thandle.corner{fill:var(--accent);stroke:#fff;stroke-width:1.5}
+.thandle.corner:hover{fill:#fff;stroke:var(--accent)}
+
+
+/* barra de arraste só no desktop */
+#panelDrag{display:none}
+/* ============ painel flutuante arrastável (desktop) ============ */
+@media (min-width:768px){
+  main{grid-template-columns:60px 1fr !important;}  /* remove a 3ª coluna fixa */
+  #panel{
+    position:fixed; top:70px; right:16px; width:300px; z-index:340;
+    max-height:calc(100vh - 90px); overflow-y:auto;
+    background:var(--bg1); border:1px solid var(--line2);
+    border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.4);
+    transform:translateY(8px); opacity:0; pointer-events:none;
+    transition:opacity .16s, transform .16s;
+    padding-top:0;
+  }
+  body.props-open #panel{ transform:translateY(0); opacity:1; pointer-events:auto; }
+  /* barra de arraste no topo do painel */
+  #panelDrag{
+    display:flex !important; align-items:center; justify-content:space-between;
+    padding:9px 12px; cursor:grab; user-select:none;
+    background:var(--bg2); border-bottom:1px solid var(--line);
+    border-radius:14px 14px 0 0; position:sticky; top:0; z-index:2;
+  }
+  #panelDrag:active{cursor:grabbing}
+  #panelDrag .pd-grip{display:flex;gap:3px;align-items:center}
+  #panelDrag .pd-grip i{width:3px;height:3px;border-radius:50%;background:var(--muted);display:block}
+  #panelDrag .pd-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600}
+  #panelDrag .pd-close{
+    width:24px;height:24px;border-radius:6px;border:1px solid var(--line2);background:var(--bg3);
+    color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;
+  }
+  #panelDrag .pd-close:hover{background:var(--danger,#e5484d);color:#fff}
+  /* no desktop, esconde a setinha de retrair mobile (usa o X da barra) */
+  #panel > #panelClose{display:none}
+}
+
+
+/* ---- linhas com campo de cor: label não encavala a caixinha ---- */
+.row .lbl{min-width:88px;flex:0 0 auto;white-space:nowrap;overflow:visible}
+/* labels longas de slider crescem com o texto (não cortam) */
+.row:has(input[type=range]) .lbl{width:auto;max-width:150px}
+/* labels de campo de cor ficam fixas para alinhar as caixinhas */
+.row:has(.cswatch) .lbl{width:88px}
+.cswatch{width:32px;height:26px;flex:0 0 auto}
+.hexinp{width:72px;flex:0 0 auto}
+.btn.cclear{flex:0 0 auto}
+/* o campo hex ocupa o espaço restante de forma flexível quando cabe */
+.row .hexinp{flex:1 1 auto;min-width:56px;max-width:90px}

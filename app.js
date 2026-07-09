@@ -24,6 +24,8 @@ const state = {
   zoom: 1,
   mirror: 'off',       // 'off' | 'v' | 'h'
   shapeKind: 'rect',
+  cornerR: 0.22,
+  globalLine: null, globalFill: null,  // últimas cores usadas (globais)
   navMode: 'select',   // último modo do FAB de navegação: 'select' | 'pan'
   lastCreate: 'draw',  // última ferramenta de criação usada (ícone do FAB esquerdo) — lápis por padrão
   bucket: { color:'#5ac8fa', tolerance:60, opacity:100 },
@@ -190,11 +192,11 @@ function paintStroke(c, it, uniform){
     c.lineCap=it.cap;
     c.stroke(p);
   } else {
-    // pena caligráfica: também aceita preenchimento por objeto se fechado
+    // pena caligráfica: preenchimento usa o CONTORNO da forma (it.d), não a fita da pena
     if(!it.erase && it.fillOn && it.closed){
       c.globalAlpha=uniform?1:(a*(it.fillOpacity/100));
       c.fillStyle=it.fill;
-      c.fill(p);
+      c.fill(new Path2D(it.d));
     }
     c.globalAlpha=a;
     const col=it.erase?'#000':lineColorOf(it);
@@ -649,15 +651,23 @@ function updateLive(el, pts){
     el.setAttribute('d', ribbonD(pts, pendingStyle.w, pendingStyle.nib, false));
 }
 function newStrokeItem(pts, erase){
+  // fecha automaticamente se o traço termina perto de onde começou
+  let closed=false;
+  if(!erase && pts.length>8){
+    const a=pts[0], b=pts[pts.length-1];
+    const gap=Math.hypot(a.x-b.x, a.y-b.y);
+    const L=pathLen(pts);
+    if(gap < Math.max(14, L*0.10)) closed=true;
+  }
   const s={
     id:state.nextId++, kind:'stroke', erase:!!erase,
     raw:pts.map(p=>({x:+p.x.toFixed(2),y:+p.y.toFixed(2)})),
-    pts:null, closed:false, processed:false, d:null,
+    pts:null, closed:closed, processed:false, d:null,
     ...pendingStyle
   };
   if(erase){ s.fillOn=false; }
   s.pts=s.raw.map(p=>({...p}));
-  s.d=polyPath(s.pts,false);
+  s.d=polyPath(s.pts, s.closed);
   return s;
 }
 function attachDrawEvents(){
@@ -711,7 +721,9 @@ function attachDrawEvents(){
       const fit=fitShape(state.shapeKind,[a,b]);
       const s={id:state.nextId++, kind:'stroke', erase:false,
         raw:fit.pts.map(p=>({...p})), pts:fit.pts.map(p=>({...p})),
-        closed:fit.closed, processed:true, d:null, ...pendingStyle};
+        closed:fit.closed, processed:true, linear:true, d:null, ...pendingStyle,
+        shapeKind:state.shapeKind, shapeBox:{minX:Math.min(a.x,b.x),minY:Math.min(a.y,b.y),maxX:Math.max(a.x,b.x),maxY:Math.max(a.y,b.y)},
+        cornerR:(state.shapeKind==='rrect'?(state.cornerR!=null?state.cornerR:0.22):null)};
       rebuildPath(s);
       state.items.push(s);
       if(state.mirror!=='off'){
@@ -745,7 +757,9 @@ function attachDrawEvents(){
       m.link={id:s.id,axis:state.mirror};
       state.items.push(m);
     }
-    compose(); renderHits(); autosave();
+    // seleciona o traço recém-criado para permitir ajuste ao vivo pelo painel aberto
+    state.selId=s.id; state.multi=[];
+    compose(); renderHits(); renderUi(); autosave();
   };
   board.addEventListener('pointerup',finish);
   board.addEventListener('pointercancel',finish);
@@ -769,14 +783,16 @@ function fitShape(kind, rough){
   } else if(kind==='rect'){
     pts.push({x:minX,y:minY},{x:maxX,y:minY},{x:maxX,y:maxY},{x:minX,y:maxY});
   } else if(kind==='rrect'){
-    const r=Math.min(w,h)*0.22;
+    const rr = (state.cornerR!=null?state.cornerR:0.22);
+    const r=Math.max(0.5, Math.min(w,h)*0.5*rr);
+    const STEPS=10;
     const cornersDef=[
       [maxX-r,minY+r,-Math.PI/2,0],[maxX-r,maxY-r,0,Math.PI/2],
       [minX+r,maxY-r,Math.PI/2,Math.PI],[minX+r,minY+r,Math.PI,1.5*Math.PI]
     ];
     for(const [ax,ay,a0,a1] of cornersDef)
-      for(let i=0;i<=6;i++){
-        const a=a0+(a1-a0)*i/6;
+      for(let i=0;i<=STEPS;i++){
+        const a=a0+(a1-a0)*i/STEPS;
         pts.push({x:ax+r*Math.cos(a),y:ay+r*Math.sin(a)});
       }
   } else if(kind==='triangle'){
@@ -891,17 +907,27 @@ document.addEventListener('pointerdown',e=>{
 },true);
 /* --------- balde --------- */
 function fillObjectAt(p, color, op){
-  // encontra o objeto fechado mais acima cujo interior contém o ponto
+  // encontra o objeto (fechado OU cujo contorno cerca o ponto) mais acima e o preenche.
+  // traços abertos cuja área contém o ponto são FECHADOS e viram forma unificada
+  // (preenchimento + linha como uma única unidade, igual às formas geométricas).
   const cv=$('composite'); const k=RES/state.size;
   const ctx=cv.getContext('2d');
   for(let i=state.items.length-1;i>=0;i--){
     const it=state.items[i];
-    if(it.kind!=='stroke' || !it.closed || it.erase) continue;
-    const path=itemPath2D(it);
+    if(it.kind!=='stroke' || it.erase) continue;
+    if(!it.pts || it.pts.length<3) continue;
+    // testa o interior do contorno (usa o path fechado do traço)
+    const closedD = it.closed ? it.d : polyPath(it.pts, true);
+    const path = it.closed ? itemPath2D(it) : new Path2D(closedD);
     ctx.save(); ctx.setTransform(k,0,0,k,0,0);
     const inside=ctx.isPointInPath(path, p.x*k, p.y*k);
     ctx.restore();
     if(inside){
+      // se era aberto, fecha-o de vez: passa a ser uma forma como as geométricas
+      if(!it.closed){
+        it.closed=true;
+        rebuildPath(it);
+      }
       it.fillOn=true; it.fill=color;
       it.fillOpacity=(op!=null?op:100);
       return it;
@@ -1184,6 +1210,69 @@ function renderTransformHandles(it){
   rot.style.cursor='grab';
   rot.addEventListener('pointerdown',e=>{ e.stopPropagation(); e.preventDefault(); startRotateDrag(it,e); });
   gUi.appendChild(rot);
+
+  // alça de arredondamento (só para retângulo arredondado)
+  if(it.shapeKind==='rrect' && it.cornerR!=null){
+    const w=bb.x1-bb.x0, h=bb.y1-bb.y0;
+    const rr=(it.cornerR!=null?it.cornerR:0.22);
+    const r=Math.max(0.5, Math.min(w,h)*0.5*rr);
+    // posiciona a bolinha no canto superior direito, deslocada ao longo da borda de topo pelo raio
+    const hx=bb.x1 - r, hy=bb.y0;
+    const cr=mk('circle');
+    cr.setAttribute('cx',hx); cr.setAttribute('cy',hy);
+    cr.setAttribute('r',hs*0.6);
+    cr.setAttribute('class','thandle corner');
+    cr.setAttribute('pointer-events','auto');
+    cr.setAttribute('vector-effect','non-scaling-stroke');
+    cr.style.cursor='ew-resize';
+    cr.addEventListener('pointerdown',e=>{ e.stopPropagation(); e.preventDefault(); startCornerDrag(it,e); });
+    gUi.appendChild(cr);
+  }
+}
+function startCornerDrag(it, ev){
+  const bb=ptsBBox(it.pts);
+  const w=bb.x1-bb.x0, h=bb.y1-bb.y0;
+  const box={minX:bb.x0,minY:bb.y0,maxX:bb.x1,maxY:bb.y1};
+  const maxR=Math.min(w,h)*0.5;
+  const move=e=>{
+    const p=boardPoint(e);
+    // distância do canto superior direito ao longo da borda de topo:
+    // puxar para a esquerda (para dentro) = mais arredondado; para a direita = menos
+    const distFromCorner = Math.max(0, bb.x1 - p.x);
+    let rr = Math.max(0, Math.min(1, distFromCorner / maxR));
+    it.cornerR = rr;
+    state.cornerR = rr; // global para novas formas
+    regenRRect(it, box);
+    if(it.link) syncTwin(it);
+    compose(); renderHits(); renderUi();
+  };
+  const up=()=>{
+    window.removeEventListener('pointermove',move);
+    window.removeEventListener('pointerup',up);
+    renderPanel(); autosave();
+  };
+  pushUndo();
+  window.addEventListener('pointermove',move);
+  window.addEventListener('pointerup',up);
+}
+function regenRRect(it, box){
+  // regenera os pontos do retângulo arredondado com o novo raio
+  const w=box.maxX-box.minX, h=box.maxY-box.minY;
+  const r=Math.max(0.5, Math.min(w,h)*0.5*(it.cornerR!=null?it.cornerR:0.22));
+  const STEPS=10;
+  const pts=[];
+  const cornersDef=[
+    [box.maxX-r,box.minY+r,-Math.PI/2,0],[box.maxX-r,box.maxY-r,0,Math.PI/2],
+    [box.minX+r,box.maxY-r,Math.PI/2,Math.PI],[box.minX+r,box.minY+r,Math.PI,1.5*Math.PI]
+  ];
+  for(const [ax,ay,a0,a1] of cornersDef)
+    for(let i=0;i<=STEPS;i++){
+      const a=a0+(a1-a0)*i/STEPS;
+      pts.push({x:ax+r*Math.cos(a),y:ay+r*Math.sin(a)});
+    }
+  it.pts=pts; it.raw=pts.map(p=>({...p})); it.linear=true; it.closed=true;
+  it.shapeBox=box;
+  rebuildPath(it);
 }
 function startScaleDrag(it,dir,ev){
   const bb=ptsBBox(it.pts);
@@ -1426,14 +1515,22 @@ function setTool(t, fromList){
   if(t==='ref' && !state.ref.src) toast('Carregue uma imagem de referência no painel à direita.');
   if(t==='select' || t==='pan') state.navMode=t;
   if(CREATE_TOOLS.includes(t)) state.lastCreate=t;
+  // cores globais: pendingStyle sempre carrega a última cor usada
+  if(pendingStyle){
+    if(state.globalLine){ pendingStyle.color=state.globalLine; pendingStyle.lineOff=false; }
+    if(state.globalFill){ pendingStyle.fill=state.globalFill; pendingStyle.fillOn=true; }
+  }
   updateFab();
   if(mobileMenuOpen) closeMobileMenu();
   renderUi(); renderPanel();
+  const hasProps=['draw','erase','shape','bucket','layers','smooth','nodes','modify','ref'].includes(t);
   if(window.innerWidth<768){
-    // FAB/atalho: apenas ativa (não abre painel). Somente selecionar na lista
-    // da esquerda abre as opções da ferramenta.
-    const hasProps=['draw','erase','shape','bucket','layers','smooth','nodes','modify','ref'].includes(t);
+    // mobile: só selecionar na lista da esquerda abre as opções da ferramenta.
     if(fromList && hasProps) openProps('props');
+    else closeProps();
+  } else {
+    // desktop: o painel flutuante abre para ferramentas com opções; fecha em select/pan.
+    if(hasProps) openProps('props');
     else closeProps();
   }
 }
@@ -1487,7 +1584,7 @@ function applyPanelMode(){
 function openProps(mode){
   panelMode = mode || 'props';
   document.body.classList.add('props-open');
-  applyPanelMode();
+  renderPanel();                 // monta o conteúdo do modo atual (props ou env)
   const P=$('panel'); if(P) P.scrollTop=0;
 }
 function closeProps(){ document.body.classList.remove('props-open'); }
@@ -1700,6 +1797,69 @@ $('clearMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
 let pendingTargets=null; // mantido para a interpretação de formas
 let smoothSession=null, smoothRAF=null;
 /* estica o traço: menos curvas, segmentos retos — extremidades preservadas */
+function denoiseStroke(s, level){
+  // reduz tremores/dentes mantendo a forma e a direção geral.
+  // opera sobre s.pts atuais (o preview já restaurou o backup antes de chamar).
+  const u = Math.max(0, Math.min(1, level));
+  if(u<=0.001) return;
+  const closed=s.closed;
+  let src0 = s.pts.map(p=>({...p}));
+  let n=src0.length;
+  if(n<3){ s.pts=src0.map(p=>({...p})); rebuildPath(s); return; }
+
+  // reamostra em passo regular para o filtro agir de forma uniforme
+  const step = Math.max(1.2, state.size/260);
+  const baseArr = closed ? src0.concat([src0[0]]) : src0;
+  let rs = resample(baseArr, step);
+  if(closed && rs.length>3){
+    const g=Math.hypot(rs[0].x-rs[rs.length-1].x, rs[0].y-rs[rs.length-1].y);
+    if(g < step*1.5) rs=rs.slice(0,-1);
+  }
+  n=rs.length;
+  if(n<3){ s.pts=src0; rebuildPath(s); return; }
+
+  // guarda as EXTREMIDADES para não encolher a forma (traço aberto)
+  const first={...rs[0]}, last={...rs[n-1]};
+
+  // filtro de média móvel na COMPONENTE PERPENDICULAR à direção local.
+  // janela e nº de passes crescem forte com u -> efeito bem perceptível.
+  const win = 1 + Math.round(u*4);          // raio da janela: até 5 vizinhos de cada lado
+  const passes = 2 + Math.round(u*8);       // até ~10 passes
+  const P=i=>rs[((i%n)+n)%n];
+  let cur = rs.map(p=>({...p}));
+
+  for(let pass=0; pass<passes; pass++){
+    const nxt=cur.map(p=>({...p}));
+    const iStart = closed?0:1, iEnd = closed?n:n-1;
+    for(let i=iStart; i<iEnd; i++){
+      // direção local suave (média de alguns vizinhos)
+      const a=cur[((i-win)%n+n)%n], c=cur[((i+win)%n)];
+      let dx=c.x-a.x, dy=c.y-a.y; const L=Math.hypot(dx,dy)||1e-9; dx/=L; dy/=L;
+      // alvo = média da janela (posição "esticada")
+      let sx=0, sy=0, cnt=0;
+      for(let k=-win;k<=win;k++){ const q=cur[((i+k)%n+n)%n]; sx+=q.x; sy+=q.y; cnt++; }
+      const mx=sx/cnt, my=sy/cnt;
+      const b=cur[i];
+      // decompõe o ponto atual vs média em direção (along) e normal (perp)
+      const vx=b.x-mx, vy=b.y-my;
+      const perp = vx*(-dy)+vy*(dx);
+      const along= vx*dx+vy*dy;
+      // puxa a componente perpendicular em direção à média (achata a ruga),
+      // preservando a componente ao longo da linha (mantém o direcional).
+      const kPerp = 0.85*u;                 // força alta na perpendicular
+      const kAlong= 0.15*u;                 // quase não mexe no sentido da linha
+      const newPerp = perp*(1-kPerp);
+      const newAlong= along*(1-kAlong);
+      nxt[i]={ x: mx + dx*newAlong + (-dy)*newPerp, y: my + dy*newAlong + (dx)*newPerp };
+    }
+    cur=nxt;
+  }
+  if(!closed){ cur[0]=first; cur[n-1]=last; }  // preserva as pontas
+  s.pts=cur;
+  s.raw=cur.map(p=>({...p}));
+  s.processed=true;
+  rebuildPath(s);
+}
 function straightenStroke(s, u){
   const wasProcessed = s.processed && s.pts && s.pts.length>1;
   const base = wasProcessed ? (s.closed ? s.pts.concat([s.pts[0]]) : s.pts) : s.raw;
@@ -1759,6 +1919,10 @@ function applySmoothPreview(){
     const u=(50-v)/50;
     for(const s of tgt) straightenStroke(s, u);
   }
+  // remover ruídos (após reto/redondo): achata pequenas rugas mantendo a direção
+  const dz = smoothSession.denoise!=null ? smoothSession.denoise : 0;
+  if(dz>0){ for(const s of tgt) denoiseStroke(s, dz/100); }
+  else { for(const s of tgt){ if(s._dnBase) delete s._dnBase; } }
   for(const s of tgt)
     if(s.link) syncTwin(s);
   compose(); renderHits(); renderUi();
@@ -1772,9 +1936,12 @@ function smoothRetarget(){
   // novo baseline a partir do estado atual (já revertido ou já aplicado)
   smoothSession.backup=snapshot();
   smoothSession.value=50;
+  smoothSession.denoise=0;
   smoothSession.applied=false;
   const sl=$('smLevel'); if(sl) sl.value=50;
   const sv=$('smLevelv'); if(sv) sv.textContent='0';
+  const dnl=$('smDenoise'); if(dnl) dnl.value=0;
+  const dnv=$('smDenoisev'); if(dnv) dnv.textContent='0';
   const sel=selItem();
   const baseTargets = state.multi.length>1
     ? state.multi.slice()
@@ -1866,18 +2033,92 @@ function reorderPanelForTool(){
   if(target && target!==P.firstElementChild) P.insertBefore(target, P.firstElementChild);
 }
 // ---------- utilidades do painel ----------
+let __helpId=0;
+const helpTexts={};
+function secHeadInfo(title, tag, help){
+  // título com selo opcional e botão (i) que abre a ajuda daquela seção
+  let btn='';
+  if(help){
+    const id='hlp'+(++__helpId);
+    helpTexts[id]=help;
+    btn='<button class="sec-info" data-help="'+id+'" title="Ajuda">i</button>';
+  }
+  return '<h3>'+title+(tag?' <span class="tag">'+tag+'</span>':'')+btn+'</h3>';
+}
+function showHelpPopup(id){
+  const txt=helpTexts[id]; if(!txt) return;
+  let ov=document.getElementById('helpPop');
+  if(ov) ov.remove();
+  ov=document.createElement('div');
+  ov.id='helpPop';
+  ov.innerHTML='<div class="help-card"><button class="help-close" id="helpClose">✕</button><div class="help-body">'+txt+'</div></div>';
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
+  document.getElementById('helpClose').onclick=close;
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest && e.target.closest('.sec-info');
+  if(b){ e.stopPropagation(); showHelpPopup(b.dataset.help); }
+});
+
+function panelTitleFor(){
+  const map={draw:'Lápis',erase:'Borracha',shape:'Forma',bucket:'Preenchimento',nodes:'Editar nós',
+    modify:'Modificar',smooth:'Suavizar',layers:'Camadas',ref:'Referência'};
+  if(panelMode==='env') return 'Ambiente';
+  return map[state.tool] || 'Opções';
+}
 function panelHead(){
-  return '<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>';
+  return '<div id="panelDrag" title="Arraste para mover"><span class="pd-grip"><i></i><i></i><i></i></span>'+
+      '<span class="pd-title">'+panelTitleFor()+'</span>'+
+      '<button class="pd-close" id="panelDragClose" title="Fechar">✕</button></div>'+
+    '<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>';
+}
+let panelPos=null; // {left,top} posição customizada do painel (desktop)
+function applyPanelPos(){
+  const P=$('panel'); if(!P) return;
+  if(window.innerWidth<768){ P.style.left=''; P.style.top=''; P.style.right=''; return; }
+  if(panelPos){
+    P.style.left=panelPos.left+'px';
+    P.style.top=panelPos.top+'px';
+    P.style.right='auto';
+  }
+}
+function bindPanelDrag(){
+  const bar=$('panelDrag'); const P=$('panel');
+  const xbtn=$('panelDragClose'); if(xbtn) xbtn.onclick=closeProps;
+  if(!bar || !P) return;
+  applyPanelPos();
+  const onDown=e=>{
+    if(window.innerWidth<768) return;           // arraste só no desktop
+    if(e.target.closest('.pd-close')) return;
+    e.preventDefault();
+    const r=P.getBoundingClientRect();
+    const ox=e.clientX-r.left, oy=e.clientY-r.top;
+    const move=ev=>{
+      let nx=ev.clientX-ox, ny=ev.clientY-oy;
+      // manter dentro da tela
+      nx=Math.max(4, Math.min(window.innerWidth - r.width - 4, nx));
+      ny=Math.max(56, Math.min(window.innerHeight - 60, ny));
+      panelPos={left:nx, top:ny};
+      P.style.left=nx+'px'; P.style.top=ny+'px'; P.style.right='auto';
+    };
+    const up=()=>{ window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); };
+    window.addEventListener('pointermove',move);
+    window.addEventListener('pointerup',up);
+  };
+  bar.addEventListener('pointerdown',onDown);
 }
 function finishToolPanel(){
   const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
+  bindPanelDrag();
   bindPanel(selItem());
   applyPanelMode();
 }
 // ---------- geradores de seção reutilizáveis ----------
 function secPencil(){ // lápis: pontas, espessura, cor da linha, opacidade
   const ps=pendingStyle;
-  return '<div class="sec"><h3>Lápis</h3>'+
+  return '<div class="sec">'+secHeadInfo('Lápis','','Desenhe à mão livre. Escolha a ponta (redonda ou caligráfica), a espessura, a cor da linha, o formato das pontas e a opacidade. Essas opções valem para os próximos traços.')+
     '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',ps.nib)+'</div>'+
     (ps.nib==='round'
       ? '<div class="row"><label class="lbl">Espessura</label>'+
@@ -1897,7 +2138,7 @@ function secPencil(){ // lápis: pontas, espessura, cor da linha, opacidade
 }
 function secEraser(){ // borracha: mesmas propriedades do lápis (sem cor)
   const ps=pendingStyle;
-  return '<div class="sec"><h3>Borracha</h3>'+
+  return '<div class="sec">'+secHeadInfo('Borracha','','A borracha apaga onde você passa, com as mesmas pontas e espessura do lápis.')+
     '<div class="row"><label class="lbl">Ponta</label>'+nibSeg('pdNib',ps.nib)+'</div>'+
     (ps.nib==='round'
       ? '<div class="row"><label class="lbl">Espessura</label>'+
@@ -1910,22 +2151,24 @@ function secEraser(){ // borracha: mesmas propriedades do lápis (sem cor)
       '<button data-v="round" class="'+(ps.cap==='round'?'on':'')+'">Redonda</button>'+
       '<button data-v="square" class="'+(ps.cap==='square'?'on':'')+'">Quadrada</button>'+
       '<button data-v="butt" class="'+(ps.cap==='butt'?'on':'')+'">Reta</button></div></div>':'')+
-    '<div class="hint">A borracha apaga onde passa, com as mesmas pontas e espessura do lápis.</div>'+
   '</div>';
 }
-function secShape(){ // forma: formas, cor linha, cor preench, espessura
+function secShape(){ // forma: formas + arredondamento + preenchimento + linha + espessura (tudo direto)
   const ps=pendingStyle;
-  return '<div class="sec"><h3>Forma geométrica</h3><div class="shape-grid">'+
+  const isR = state.shapeKind==='rrect';
+  return '<div class="sec">'+secHeadInfo('Forma geométrica','','Arraste no canvas para criar. A forma tem cor de preenchimento e cor de linha (borda), cada uma com ✕ para remover. No arredondado, ajuste o canto pela alça na quina ou pelo controle "Arredondamento".')+'<div class="shape-grid" style="margin-bottom:12px">'+
     SHAPE_DEFS.map(d=>'<button class="shape-opt shape-pick'+(state.shapeKind===d[0]?' on':'')+'" data-shape="'+d[0]+'"><svg viewBox="0 0 30 30">'+d[2]+'</svg>'+d[1]+'</button>').join('')+
     '</div>'+
-    '<div class="row"><label class="lbl">Linha</label>'+colorFieldX('pdColor', ps.lineOff?null:ps.color, 'pdLineOff')+'</div>'+
+    (isR?'<div class="row"><label class="lbl">Arredondamento</label>'+
+      '<input type="range" id="pdCornerR" min="0" max="100" value="'+Math.round((state.cornerR!=null?state.cornerR:0.22)*100)+'"><span class="range-val" id="pdCornerRv">'+Math.round((state.cornerR!=null?state.cornerR:0.22)*100)+'%</span></div>':'')+
     '<div class="row"><label class="lbl">Preenchimento</label>'+colorFieldX('pdFill', ps.fillOn?ps.fill:null, 'pdFillClear')+'</div>'+
+    '<div class="row"><label class="lbl">Linha</label>'+colorFieldX('pdColor', ps.lineOff?null:ps.color, 'pdLineOff')+'</div>'+
     '<div class="row"><label class="lbl">Espessura da linha</label>'+
       '<input type="range" id="pdW" min="1" max="80" value="'+ps.w+'"><span class="range-val" id="pdWv">'+ps.w+'</span></div>'+
-    '<div class="hint">Linha, preenchimento e espessura valem para toda forma criada. Preenchimento vazio (✕) = sem fundo. Clique e arraste no canvas.</div></div>';
+  '</div>';
 }
 function secFill(){ // preenchimento (antigo balde): cor, opacidade, tolerância
-  return '<div class="sec"><h3>Preenchimento</h3>'+
+  return '<div class="sec">'+secHeadInfo('Preenchimento','','Clique dentro de uma forma fechada para preenchê-la. Em regiões abertas, a tolerância define até onde a cor se espalha.')+
     '<div class="row"><label class="lbl">Cor</label>'+
       '<button class="cswatch" id="bkColor" style="background:'+state.bucket.color+'"></button>'+
       '<input class="inp hexinp" id="bkColortx" value="'+String(state.bucket.color).toUpperCase()+'" maxlength="7" spellcheck="false"></div>'+
@@ -1933,7 +2176,6 @@ function secFill(){ // preenchimento (antigo balde): cor, opacidade, tolerância
       '<input type="range" id="bkOp" min="5" max="100" value="'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'"><span class="range-val" id="bkOpv">'+(state.bucket.opacity!=null?state.bucket.opacity:100)+'</span></div>'+
     '<div class="row"><label class="lbl">Tolerância</label>'+
       '<input type="range" id="bkTol" min="8" max="140" value="'+state.bucket.tolerance+'"><span class="range-val" id="bkTolv">'+state.bucket.tolerance+'</span></div>'+
-    '<div class="hint">Clique dentro de uma forma fechada para preenchê-la. Em regiões abertas, usa tolerância para delimitar.</div>'+
   '</div>';
 }
 function secRef(){ // imagem de referência: carregar, ocultar, remover, opacidade, escala
@@ -1955,23 +2197,26 @@ function secRef(){ // imagem de referência: carregar, ocultar, remover, opacida
 function secNodes(it){ // editar nós: dobrar/dividir + adicionar/remover pontual + arrastar
   if(!it || it.kind!=='stroke') return '<div class="sec"><h3>Editar nós</h3><div class="hint">Toque num traço para editar seus nós.</div></div>';
   const add = nodeSubmode==='add', rem = nodeSubmode==='remove';
-  return '<div class="sec"><h3>Editar nós <span class="tag">'+it.pts.length+' nós</span></h3>'+
+  return '<div class="sec">'+secHeadInfo('Editar nós', it.pts.length+' nós','Dobrar (✕) e Dividir (÷) mudam a quantidade de nós de uma vez. Em "Adicionar nó" (＋), toque sobre a linha para criar um nó ali; em "Remover nó" (－), toque no nó a retirar. Fora desses modos, arraste os pontos livremente. Toque noutro objeto para editá-lo.')+
     '<div class="cp-label" style="text-transform:uppercase;letter-spacing:.8px;margin:2px 0 6px;font-size:10px;color:var(--muted)">Quantidade</div>'+
     '<div class="btn-row">'+
-      '<button class="btn sm" id="ndDouble">Dobrar</button>'+
-      '<button class="btn sm" id="ndHalve">Dividir</button></div>'+
+      '<button class="btn sm" id="ndDouble">✕ Dobrar</button>'+
+      '<button class="btn sm" id="ndHalve">÷ Dividir</button></div>'+
     '<div class="cp-label" style="text-transform:uppercase;letter-spacing:.8px;margin:10px 0 6px;font-size:10px;color:var(--muted)">Editar pontual</div>'+
     '<div class="btn-row">'+
-      '<button class="btn sm'+(add?' primary':'')+'" id="ndAdd">'+(add?'Clique na linha…':'Adicionar nó')+'</button>'+
-      '<button class="btn sm'+(rem?' danger':'')+'" id="ndRemove">'+(rem?'Clique no nó…':'Remover nó')+'</button></div>'+
-    '<div class="hint">Dobrar/Dividir altera a quantidade de nós de uma vez. Em "Adicionar nó", toque sobre a linha para criar um nó ali; em "Remover nó", toque no nó a retirar. Fora desses modos, arraste os pontos livremente. Toque noutro objeto para editá-lo.</div>'+
+      '<button class="btn sm'+(add?' primary':'')+'" id="ndAdd">'+(add?'＋ Clique na linha…':'＋ Adicionar nó')+'</button>'+
+      '<button class="btn sm'+(rem?' danger':'')+'" id="ndRemove">'+(rem?'－ Clique no nó…':'－ Remover nó')+'</button></div>'+
   '</div>';
 }
 
 let nodeSubmode=null; // null | 'add' | 'remove'
-let modifyOpen='linha'; // qual seção retrátil está aberta no Modificar
+let modifyOpen='linha'; // seção retrátil aberta no Modificar
+let accOpen={}; // estado de acordeões por chave (ex.: forma-linha)
 function accItem(key, title, bodyHTML){
-  const open = modifyOpen===key;
+  // 'linha','preenchimento','suavidade','acoes' usam modifyOpen (um por vez);
+  // demais chaves usam accOpen[key] (retração independente, inicia fechada)
+  const inModify=['linha','preenchimento','suavidade','acoes'].includes(key);
+  const open = inModify ? (modifyOpen===key) : (accOpen[key]===true);
   return '<div class="acc'+(open?' open':'')+'" data-acc="'+key+'">'+
     '<button class="acc-head" data-acctoggle="'+key+'"><span>'+title+'</span>'+
       '<svg viewBox="0 0 24 24" class="acc-caret"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>'+
@@ -2033,10 +2278,21 @@ function renderPanel(){
   const multiSel = (state.multi && state.multi.length>1)
     ? state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id)) : null;
   let html='';
+  // modo AMBIENTE (Canvas/Projetos) — acionado pelo botão de ambiente
+  if(panelMode==='env'){
+    P.innerHTML=panelHead()+envSectionsHTML();
+    const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
+    bindPanel(it);
+    renderProjects();
+    bindPanelDrag();
+    applyPanelMode();
+    return;
+  }
   if(state.tool==='layers'){
     P.innerHTML=panelHead()+layersSectionHTML();
     const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
     bindLayersSection();
+    bindPanelDrag();
     applyPanelMode();
     return;
   }
@@ -2044,18 +2300,26 @@ function renderPanel(){
     const v = smoothSession ? smoothSession.value : 50;
     const temAlvo = smoothSession && smoothSession.targets && smoothSession.targets.length===1;
     const alvo = temAlvo ? 'traço selecionado' : (state.multi.length>1 ? state.multi.length+' traços' : 'toque num traço');
-    html='<div class="sec"><h3>Suavizar traço <span class="tag">'+alvo+'</span></h3>'+
+    const dv = smoothSession && smoothSession.denoise!=null ? smoothSession.denoise : 0;
+    html='<div class="sec">'+secHeadInfo('Suavizar traço', alvo,
+      'Reto ↔ Redondo: arraste para o redondo para arredondar e tirar o tremido, ou para o reto para deixar linear — sempre respeitando as pontas. "Reduzir ruídos" achata as rugas e dentes mantendo a direção da linha, sem deformar o objeto (como esticar um plástico rugado). Toque noutro traço para ajustá-lo; a ferramenta continua aberta até você trocar de ferramenta. Aplicar confirma; sair sem aplicar volta ao original.')+
       '<div class="sm-scale"><span class="sm-end">Reto</span>'+
         '<input type="range" id="smLevel" min="0" max="100" value="'+v+'">'+
         '<span class="sm-end">Redondo</span></div>'+
       '<div class="row" style="justify-content:center;margin:2px 0 8px"><span class="range-val" id="smLevelv">'+(v-50)+'</span></div>'+
+      '<div class="cp-label" style="text-transform:uppercase;letter-spacing:.8px;margin:14px 0 5px;font-size:10px;color:var(--muted)">Reduzir ruídos</div>'+
+      '<div class="sm-scale"><span class="sm-end">0</span>'+
+        '<input type="range" id="smDenoise" min="0" max="100" value="'+dv+'">'+
+        '<span class="sm-end">Máx</span></div>'+
+      '<div class="row" style="justify-content:center;margin:2px 0 8px"><span class="range-val" id="smDenoisev">'+dv+'</span></div>'+
       '<div class="btn-row" style="justify-content:center"><button class="btn sm primary" id="smApply">Aplicar</button>'+
         '<button class="btn sm" id="smReset">Voltar ao meio</button></div>'+
     '</div>';
     // no modo suavizar mostra SÓ esta seção (nada das propriedades do traço)
-    P.innerHTML='<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>'+html;
+    P.innerHTML=panelHead()+html;
     const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
     bindSmoothPanel();
+    bindPanelDrag();
     applyPanelMode();
     return;
   }
@@ -2089,7 +2353,12 @@ function renderPanel(){
     finishToolPanel(); return;
   }
 
+  // (env agora vive em envSectionsHTML; este trecho não é mais alcançado)
+  return;
+}
+function envSectionsHTML(){
   const r=state.ref;
+  let html='';
   html+='<div class="sec" data-group="env"><h3>Canvas</h3>'+
     '<div class="row"><label class="lbl">Tamanho</label><select class="inp" id="cvSize" style="flex:1">'+
       [128,256,512,1024].map(v=>'<option value="'+v+'"'+(state.size===v?' selected':'')+'>'+v+' × '+v+' px</option>').join('')+'</select></div>'+
@@ -2125,41 +2394,50 @@ function renderPanel(){
     '<div class="hint">Projetos ficam no navegador; o trabalho atual é salvo automaticamente. A imagem de referência não é incluída.</div>'+
   '</div>';
 
-  P.innerHTML='<button id="panelClose" title="Retrair"><svg viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button>'+html;
-  const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
-  bindPanel(it);
-  renderProjects();
-  reorderPanelForTool();
-  applyPanelMode();
+  return html;
 }
 function bindSmoothPanel(){
   const r=$('smLevel'); if(!r) return;
   if(!smoothSession) beginSmoothSession();
+  if(smoothSession.denoise==null) smoothSession.denoise=0;
   r.oninput=()=>{
     smoothSession.value=parseInt(r.value);
     const lv=$('smLevelv'); if(lv) lv.textContent=(smoothSession.value-50);
     if(!smoothRAF) smoothRAF=requestAnimationFrame(()=>{ smoothRAF=null; applySmoothPreview(); });
   };
+  const dn=$('smDenoise'); if(dn) dn.oninput=()=>{
+    smoothSession.denoise=parseInt(dn.value);
+    const dv=$('smDenoisev'); if(dv) dv.textContent=smoothSession.denoise;
+    if(!smoothRAF) smoothRAF=requestAnimationFrame(()=>{ smoothRAF=null; applySmoothPreview(); });
+  };
   const ap=$('smApply'); if(ap) ap.onclick=()=>{
     if(!smoothSession) return;
+    const changed = (smoothSession.value<48 || smoothSession.value>52) || (smoothSession.denoise>0);
     // confirma o ajuste atual: vira o novo baseline (registra no desfazer)
-    if(smoothSession.value<48 || smoothSession.value>52){
+    if(changed){
       undoStack.push(smoothSession.backup); if(undoStack.length>60) undoStack.shift();
       redoStack=[]; updateUndoBtns();
     }
-    smoothSession.backup=snapshot();
-    smoothSession.applied=true;      // marca como aplicado (não reverte ao trocar)
+    smoothSession.backup=snapshot();   // baseline = estado JÁ ajustado (permite acumular)
+    smoothSession.applied=true;
+    // zera os DOIS controles para poder aplicar de novo sobre o resultado
     smoothSession.value=50;
+    smoothSession.denoise=0;
     const rr=$('smLevel'); if(rr) rr.value=50;
     const lv=$('smLevelv'); if(lv) lv.textContent='0';
-    toast('Ajuste aplicado. Continue ou toque noutro traço.');
+    const dn=$('smDenoise'); if(dn) dn.value=0;
+    const dv=$('smDenoisev'); if(dv) dv.textContent='0';
+    if(changed) toast('Ajuste aplicado. Deslize de novo para reforçar.');
     autosave();
   };
   const rs=$('smReset'); if(rs) rs.onclick=()=>{
-    // volta ao meio: reverte o preview ao baseline atual, slider no zero
+    // volta ao meio: reverte o preview ao baseline atual, ambos sliders no zero
     if(smoothSession){
       restore(smoothSession.backup);
       smoothSession.value=50;
+      smoothSession.denoise=0;
+      const dn=$('smDenoise'); if(dn) dn.value=0;
+      const dv=$('smDenoisev'); if(dv) dv.textContent='0';
       compose(); renderHits(); renderUi();
     }
     const rr=$('smLevel'); if(rr) rr.value=50;
@@ -2172,7 +2450,11 @@ function bindPanel(it){
   // acordeão do Modificar: abre um por vez
   document.querySelectorAll('[data-acctoggle]').forEach(b=>b.onclick=()=>{
     const k=b.dataset.acctoggle;
-    modifyOpen = (modifyOpen===k) ? null : k;
+    if(['linha','preenchimento','suavidade','acoes'].includes(k)){
+      modifyOpen = (modifyOpen===k) ? null : k;   // Modificar: um por vez
+    } else {
+      accOpen[k] = !accOpen[k];                    // outros: retração independente
+    }
     renderPanel();
   });
   // suavidade dentro do Modificar
@@ -2235,13 +2517,13 @@ function bindPanel(it){
     bindRange('stW',v=>{it.w=v;rr();});
     bindRange('stW2',v=>{it.w2=v;rr();});
     // LINHA (com opção sem cor = adota a cor do preenchimento)
-    bindColorField('stColor', ()=>it.color, v=>{ it.color=v; it.lineOff=false; rr(); renderPanel(); });
+    bindColorField('stColor', ()=>it.color, v=>{ it.color=v; it.lineOff=false; state.globalLine=v; if(pendingStyle){pendingStyle.color=v;pendingStyle.lineOff=false;} rr(); renderPanel(); });
     const lo=$('stLineOff'); if(lo) lo.onclick=()=>{ it.lineOff=true; rr(); renderPanel(); };
     bindRange('stOp',v=>{it.opacity=v;rr();});
     const sc=$('segCap'); if(sc) sc.querySelectorAll('button').forEach(b=>b.onclick=()=>{it.cap=b.dataset.v;renderPanel();rr();});
     // PREENCHIMENTO (com opção sem cor = X)
     bindColorField('stFill', ()=>it.fill||'#5AC8FA', v=>{
-      it.fill=v; it.fillOn=true; rr(); renderPanel();
+      it.fill=v; it.fillOn=true; state.globalFill=v; if(pendingStyle){pendingStyle.fill=v;pendingStyle.fillOn=true;} rr(); renderPanel();
     });
     const fc=$('stFillClear'); if(fc) fc.onclick=()=>{ it.fillOn=false; rr(); renderPanel(); };
     bindRange('stFillOp',v=>{it.fillOpacity=v;rr();});
@@ -2271,15 +2553,28 @@ function bindPanel(it){
   document.querySelectorAll('.shape-pick').forEach(b=>b.onclick=()=>{
     state.shapeKind=b.dataset.shape; renderPanel();
   });
-  bindNib('pdNib',v=>{pendingStyle.nib=v;renderPanel();refreshBrushCursor();});
-  bindRange('pdW',v=>{pendingStyle.w=v;refreshBrushCursor();});
-  bindRange('pdW2',v=>{pendingStyle.w2=v;refreshBrushCursor();});
-  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v; pendingStyle.lineOff=false; refreshBrushCursor(); renderPanel();});
-  const pdlo=$('pdLineOff'); if(pdlo) pdlo.onclick=()=>{ pendingStyle.lineOff=true; renderPanel(); };
-  bindColorField('pdFill', ()=>pendingStyle.fill||'#5AC8FA', v=>{ pendingStyle.fill=v; pendingStyle.fillOn=true; renderPanel(); });
-  const pdfc=$('pdFillClear'); if(pdfc) pdfc.onclick=()=>{ pendingStyle.fillOn=false; renderPanel(); };
-  bindRange('pdOp',v=>{pendingStyle.opacity=v;});
-  const pdcap=$('pdCap'); if(pdcap) pdcap.querySelectorAll('button').forEach(b=>b.onclick=()=>{pendingStyle.cap=b.dataset.v;renderPanel();refreshBrushCursor();});
+  // aplica ao objeto selecionado (recém-criado) enquanto o painel está aberto
+  const liveObj=()=>{
+    if(!document.body.classList.contains('props-open')) return null;
+    const it=selItem();
+    return (it && it.kind==='stroke') ? it : null;
+  };
+  const liveApply=(fn)=>{
+    const it=liveObj(); if(!it) return;
+    fn(it);
+    if(it.link) syncTwin(it);
+    rebuildPath(it); compose(); renderHits(); renderUi();
+  };
+  bindNib('pdNib',v=>{pendingStyle.nib=v; liveApply(it=>{it.nib=v;}); renderPanel();refreshBrushCursor();});
+  bindRange('pdW',v=>{pendingStyle.w=v; liveApply(it=>{it.w=v;}); refreshBrushCursor();});
+  bindRange('pdW2',v=>{pendingStyle.w2=v; liveApply(it=>{it.w2=v;}); refreshBrushCursor();});
+  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v; pendingStyle.lineOff=false; state.globalLine=v; liveApply(it=>{it.color=v; it.lineOff=false;}); refreshBrushCursor(); renderPanel();});
+  const pdlo=$('pdLineOff'); if(pdlo) pdlo.onclick=()=>{ pendingStyle.lineOff=true; liveApply(it=>{it.lineOff=true;}); renderPanel(); };
+  bindColorField('pdFill', ()=>pendingStyle.fill||'#5AC8FA', v=>{ pendingStyle.fill=v; pendingStyle.fillOn=true; state.globalFill=v; liveApply(it=>{it.fill=v; it.fillOn=true;}); renderPanel(); });
+  const pdfc=$('pdFillClear'); if(pdfc) pdfc.onclick=()=>{ pendingStyle.fillOn=false; liveApply(it=>{it.fillOn=false;}); renderPanel(); };
+  bindRange('pdOp',v=>{pendingStyle.opacity=v; liveApply(it=>{it.opacity=v;});});
+  bindRange('pdCornerR',v=>{ state.cornerR=v/100; liveApply(it=>{ if(it.shapeKind==='rrect' && it.shapeBox){ it.cornerR=v/100; regenRRect(it, it.shapeBox); } }); });
+  const pdcap=$('pdCap'); if(pdcap) pdcap.querySelectorAll('button').forEach(b=>b.onclick=()=>{pendingStyle.cap=b.dataset.v; liveApply(it=>{it.cap=b.dataset.v;}); renderPanel();refreshBrushCursor();});
   bindColorField('bkColor', ()=>state.bucket.color, v=>{state.bucket.color=v;});
   bindRange('bkOp',v=>{state.bucket.opacity=v;});
   bindRange('bkTol',v=>{state.bucket.tolerance=v;});
