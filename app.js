@@ -1967,10 +1967,17 @@ function applyPanelMode(){
   const P=$('panel');
   if(!P) return;
   const mobile=window.innerWidth<768;
-  // seções com data-group aparecem só quando o modo corresponde ao grupo
+  // modos especiais (aparecem só quando o painel está nesse modo)
+  const SPECIAL=['env','colors','projects'];
   P.querySelectorAll('.sec[data-group]').forEach(s=>{
     const g = s.getAttribute('data-group');
-    s.style.display = (!mobile) ? '' : ((panelMode===g) ? '' : 'none');
+    if(SPECIAL.includes(g)){
+      // seção de um modo especial: só aparece quando o painel está nesse modo
+      s.style.display = (!mobile) ? '' : ((panelMode===g) ? '' : 'none');
+    } else {
+      // seção de ferramenta (ex.: layers): aparece no modo props como as demais
+      s.style.display = (!mobile || panelMode==='props') ? '' : 'none';
+    }
   });
   // seções sem data-group (opções da ferramenta) aparecem só no modo props
   P.querySelectorAll('.sec:not([data-group])').forEach(s=>{
