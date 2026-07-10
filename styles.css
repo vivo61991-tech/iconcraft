@@ -512,7 +512,9 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   border:1px solid transparent;background:var(--bg2);
 }
 .lay-item:hover{background:var(--bg3)}
-.lay-item.sel{background:var(--accent-soft);border-color:var(--accent)}
+.lay-item.sel{background:rgba(56,132,255,.28);border-color:#3884ff;box-shadow:0 0 0 2px #3884ff inset}
+.lay-item.sel .lay-row{background:transparent}
+.lay-item.sel .lay-name{color:#cfe0ff}
 .lay-item.over{border-color:var(--accent);border-style:dashed}
 .lay-item.drag{opacity:.4}
 .lay-sw{width:18px;height:18px;border-radius:5px;border:2px solid var(--line2);flex:0 0 auto}
@@ -641,9 +643,11 @@ body.eyedrop-capturing #workspace{touch-action:none}
 .lay-row{display:flex;align-items:center;gap:8px;padding:8px 9px;cursor:pointer}
 .lay-mirror .lay-row:first-of-type{border-bottom:1px dashed var(--line)}
 .lay-mirror .lay-row:hover{background:var(--bg3)}
-.lay-mirror.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.lay-mirror.sel{border-color:#3884ff;box-shadow:0 0 0 2px #3884ff inset;background:rgba(56,132,255,.24)}
 /* container simples (não espelhado) mantém o item interno colado */
 .lay-item:not(.lay-mirror) .lay-row{padding:0}
+.lay-row.sel{background:rgba(56,132,255,.30)}
+.lay-mirror .lay-row.sel{background:rgba(56,132,255,.34)}
 
 /* ============ botão de informação + popup de ajuda ============ */
 .sec-info{

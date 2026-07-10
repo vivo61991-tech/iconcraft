@@ -1281,6 +1281,7 @@ function renderUi(){
   updateOrderFabs();
   updateColorBtn();
   updatePropsHud();
+  refreshLayerHighlight();
   gUi.innerHTML='';
   if(state.multi && state.multi.length>1){
     const members=state.items.filter(i=>i.kind==='stroke' && state.multi.includes(i.id));
@@ -2077,11 +2078,27 @@ function layersSectionHTML(){
       '</div>');
     } else {
       done.add(it.id);
-      blocks.push('<div class="lay-item" draggable="true" data-id="'+it.id+'">'+rowHTML(it)+'</div>');
+      const itemSel = (it.id===state.selId) || (state.multi&&state.multi.includes(it.id));
+      blocks.push('<div class="lay-item'+(itemSel?' sel':'')+'" draggable="true" data-id="'+it.id+'">'+rowHTML(it)+'</div>');
     }
   }
   h+='<div class="lay-list" id="layList">'+blocks.join('')+'</div></div>';
   return h;
+}
+function refreshLayerHighlight(){
+  const list=$('layList'); if(!list) return;
+  const isSel=(id)=> id===state.selId || (state.multi && state.multi.includes(id));
+  // linhas internas
+  list.querySelectorAll('.lay-row').forEach(rw=>{
+    rw.classList.toggle('sel', isSel(+rw.dataset.id));
+  });
+  // containers (item simples e grupo espelhado)
+  list.querySelectorAll('.lay-item').forEach(item=>{
+    let on=false;
+    item.querySelectorAll('.lay-row').forEach(rw=>{ if(isSel(+rw.dataset.id)) on=true; });
+    if(item.dataset.id!=null && isSel(+item.dataset.id)) on=true;
+    item.classList.toggle('sel', on);
+  });
 }
 function bindLayersSection(){
   const list=$('layList');
