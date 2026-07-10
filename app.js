@@ -21,7 +21,7 @@ const state = {
   drawMode: 'free',     // 'free' | 'straight' | 'curve'
   joinEnds: false,      // conectar pontas: funde traços cujas pontas se tocam
   trimJoin: false,      // ajustar pontas: torna a junção perfeita (corta/completa)
-  showProps: false,     // "Ver propriedades dos objetos": HUD no topo com cor/posição/tamanho
+  showProps: true,      // "Ver propriedades dos objetos": HUD no topo com cor/posição/tamanho (habilitado por padrão)
   items: [],           // {id,kind:'stroke'|'fill', erase, raw, pts, closed, processed, nib, w, color, opacity, cap, fillOn, fill, fillOpacity, d}
   nextId: 1,
   tool: 'select',
@@ -31,11 +31,10 @@ const state = {
   mirror: 'off',       // 'off' | 'v' | 'h'
   shapeKind: 'rect',
   cornerR: 0.22,
-  globalLine: null, globalFill: null,  // últimas cores usadas (globais)
-  penLine: '#222222',   // cor de LINHA do seletor de cores (só para novos objetos)
-  penLineOff: false,    // linha sem cor no seletor
-  penFill: '#5AC8FA',   // cor de PREENCHIMENTO do seletor de cores
-  penFillOn: true,      // se o preenchimento está ativo no seletor
+  globalLine: '#1D2333',   // cor de LINHA ativa (global, predefinida) — vale para todas as ferramentas
+  globalFill: '#5AC8FA',   // cor de PREENCHIMENTO ativa (global, predefinida)
+  globalLineOff: false,    // linha sem cor
+  globalFillOn: true,      // preenchimento ativo
   navMode: 'select',   // último modo do FAB de navegação: 'select' | 'pan'
   lastCreate: 'draw',  // última ferramenta de criação usada (ícone do FAB esquerdo) — lápis por padrão
   bucket: { color:'#5ac8fa', tolerance:60, opacity:100 },
@@ -49,8 +48,13 @@ function defaultInk(){
 }
 let pendingStyle=null;  // {w,color,nib,cap,...} para os próximos traços
 const NEW_STROKE = () => ({
-  w:8, w2:4, color:defaultInk(), opacity:100, cap:'round', nib:'round',
-  fillOn:false, fill:'#5ac8fa', fillOpacity:100, lineOff:false
+  w:8, w2:4,
+  color: (state.globalLine!=null ? state.globalLine : defaultInk()),
+  opacity:100, cap:'round', nib:'round',
+  fillOn: !!state.globalFillOn,
+  fill: (state.globalFill!=null ? state.globalFill : '#5ac8fa'),
+  fillOpacity:100,
+  lineOff: !!state.globalLineOff
 });
 
 function toast(msg, err){
@@ -1842,9 +1846,9 @@ const ICON_SELECT='<svg viewBox="0 0 24 24"><path d="M7 2l12 11.2-5.8.5 3.3 7.3-
 const ICON_PAN='<svg viewBox="0 0 24 24"><path d="M13 6v5h5V7.75L22.25 12 18 16.25V13h-5v5h3.25L12 22.25 7.75 18H11v-5H6v3.25L1.75 12 6 7.75V11h5V6H7.75L12 1.75 16.25 6z"/></svg>';
 const CREATE_TOOLS=['draw','erase','shape','bucket','nodes','ref'];
 function colorsSectionHTML(){
-  const line = activeLineColor();
-  const fill = activeFillColor();
-  return '<div class="sec" data-group="colors">'+secHeadInfo('Cores ativas','','Escolha aqui a cor da linha (contorno) e do preenchimento. São as cores ativas globais: valem para os PRÓXIMOS objetos que você criar. Use o ✕ para deixar sem cor.')+
+  const line = state.globalLineOff ? null : state.globalLine;
+  const fill = state.globalFillOn ? state.globalFill : null;
+  return '<div class="sec" data-group="colors">'+secHeadInfo('Cores ativas','','Cor da linha (contorno) e do preenchimento ativas. São globais: já vêm predefinidas e valem para os PRÓXIMOS objetos que você criar em qualquer ferramenta. Use o ✕ para deixar sem cor.')+
     '<div class="row"><label class="lbl">Linha</label>'+colorFieldX('gcLine', line, 'gcLineOff')+'</div>'+
     '<div class="row"><label class="lbl">Preenchimento</label>'+colorFieldX('gcFill', fill, 'gcFillClear')+'</div>'+
   '</div>';
@@ -1852,19 +1856,19 @@ function colorsSectionHTML(){
 function bindColorsSection(){
   // seletor das cores ativas GLOBAIS (para novos objetos). Não altera objetos existentes.
   const applyLine=v=>{
-    state.globalLine=v; state.penLine=v; state.penLineOff=false;
-    pendingStyle.color=v; pendingStyle.lineOff=false;
+    state.globalLine=v; state.globalLineOff=false;
+    if(pendingStyle){ pendingStyle.color=v; pendingStyle.lineOff=false; }
     updateColorBtn(); refreshBrushCursor();
   };
   const applyFill=v=>{
-    state.globalFill=v; state.penFill=v; state.penFillOn=true;
-    pendingStyle.fill=v; pendingStyle.fillOn=true;
+    state.globalFill=v; state.globalFillOn=true;
+    if(pendingStyle){ pendingStyle.fill=v; pendingStyle.fillOn=true; }
     updateColorBtn();
   };
-  bindColorField('gcLine', ()=>activeLineColor()||'#222222', applyLine);
-  const lo=$('gcLineOff'); if(lo) lo.onclick=()=>{ state.globalLine=null; state.penLineOff=true; pendingStyle.lineOff=true; updateColorBtn(); renderPanel(); };
-  bindColorField('gcFill', ()=>activeFillColor()||'#5AC8FA', applyFill);
-  const fc=$('gcFillClear'); if(fc) fc.onclick=()=>{ state.globalFill=null; state.penFillOn=false; pendingStyle.fillOn=false; updateColorBtn(); renderPanel(); };
+  bindColorField('gcLine', ()=>state.globalLine||'#1D2333', applyLine);
+  const lo=$('gcLineOff'); if(lo) lo.onclick=()=>{ state.globalLineOff=true; if(pendingStyle)pendingStyle.lineOff=true; updateColorBtn(); renderPanel(); };
+  bindColorField('gcFill', ()=>state.globalFill||'#5AC8FA', applyFill);
+  const fc=$('gcFillClear'); if(fc) fc.onclick=()=>{ state.globalFillOn=false; if(pendingStyle)pendingStyle.fillOn=false; updateColorBtn(); renderPanel(); };
 }
 function updatePropsHud(){
   const hud=$('propsHud'); if(!hud) return;
@@ -1881,25 +1885,20 @@ function updatePropsHud(){
   $('propsText').innerHTML='X <b>'+fmt(m.h)+'</b>  Y <b>'+fmt(m.v)+'</b>  L <b>'+m.w+'</b>  A <b>'+m.ht+'</b>';
 }
 function activeLineColor(){
-  // cor de linha ativa (global): última escolhida em qualquer lugar
-  if(state.globalLine!=null) return state.globalLine;
-  if(pendingStyle && pendingStyle.lineOff) return null;
-  return (pendingStyle && pendingStyle.color) || state.penLine || '#222';
+  return state.globalLineOff ? null : state.globalLine;
 }
 function activeFillColor(){
-  // cor de preenchimento ativa (global)
-  if(state.globalFill!=null) return state.globalFill;
-  if(pendingStyle && pendingStyle.fillOn===false) return null;
-  return (pendingStyle && pendingStyle.fill) || state.penFill || null;
+  return state.globalFillOn ? state.globalFill : null;
 }
 function updateColorBtn(){
   const c=$('colorBtnCirc'); if(!c) return;
   // BORDA do círculo = cor de linha ativa (global); INTERIOR = cor de preenchimento ativa (global)
-  const line = activeLineColor();
-  const fill = activeFillColor();
-  c.setAttribute('stroke', line || '#888');
-  if(fill!=null){ c.setAttribute('fill', fill); c.style.fillOpacity='1'; }
-  else { c.setAttribute('fill', 'none'); c.style.fillOpacity='0'; }
+  // usa style inline (prioridade máxima) para vencer qualquer regra CSS
+  const line = state.globalLineOff ? '#888888' : (state.globalLine || '#888888');
+  const fill = state.globalFillOn ? (state.globalFill || 'none') : 'none';
+  c.style.setProperty('stroke', line, 'important');
+  c.style.setProperty('fill', fill, 'important');
+  c.style.fillOpacity = (fill!=='none') ? '1' : '0';
 }
 function updateFab(){
   updateColorBtn();
@@ -2913,13 +2912,13 @@ function bindPanel(it){
     bindRange('stW',v=>{it.w=v;rr();});
     bindRange('stW2',v=>{it.w2=v;rr();});
     // LINHA (com opção sem cor = adota a cor do preenchimento)
-    bindColorField('stColor', ()=>it.color, v=>{ it.color=v; it.lineOff=false; state.globalLine=v; if(pendingStyle){pendingStyle.color=v;pendingStyle.lineOff=false;} updateColorBtn(); rr(); renderPanel(); });
+    bindColorField('stColor', ()=>it.color, v=>{ it.color=v; it.lineOff=false; state.globalLine=v; state.globalLineOff=false; if(pendingStyle){pendingStyle.color=v;pendingStyle.lineOff=false;} updateColorBtn(); rr(); renderPanel(); });
     const lo=$('stLineOff'); if(lo) lo.onclick=()=>{ it.lineOff=true; rr(); renderPanel(); };
     bindRange('stOp',v=>{it.opacity=v;rr();});
     const sc=$('segCap'); if(sc) sc.querySelectorAll('button').forEach(b=>b.onclick=()=>{it.cap=b.dataset.v;renderPanel();rr();});
     // PREENCHIMENTO (com opção sem cor = X)
     bindColorField('stFill', ()=>it.fill||'#5AC8FA', v=>{
-      it.fill=v; it.fillOn=true; state.globalFill=v; if(pendingStyle){pendingStyle.fill=v;pendingStyle.fillOn=true;} updateColorBtn(); rr(); renderPanel();
+      it.fill=v; it.fillOn=true; state.globalFill=v; state.globalFillOn=true; if(pendingStyle){pendingStyle.fill=v;pendingStyle.fillOn=true;} updateColorBtn(); rr(); renderPanel();
     });
     const fc=$('stFillClear'); if(fc) fc.onclick=()=>{ it.fillOn=false; rr(); renderPanel(); };
     bindRange('stFillOp',v=>{it.fillOpacity=v;rr();});
@@ -2964,9 +2963,9 @@ function bindPanel(it){
   bindNib('pdNib',v=>{pendingStyle.nib=v; liveApply(it=>{it.nib=v;}); renderPanel();refreshBrushCursor();});
   bindRange('pdW',v=>{pendingStyle.w=v; liveApply(it=>{it.w=v;}); refreshBrushCursor();});
   bindRange('pdW2',v=>{pendingStyle.w2=v; liveApply(it=>{it.w2=v;}); refreshBrushCursor();});
-  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v; pendingStyle.lineOff=false; state.globalLine=v; liveApply(it=>{it.color=v; it.lineOff=false;}); updateColorBtn(); refreshBrushCursor(); renderPanel();});
+  bindColorField('pdColor', ()=>pendingStyle.color, v=>{pendingStyle.color=v; pendingStyle.lineOff=false; state.globalLine=v; state.globalLineOff=false; liveApply(it=>{it.color=v; it.lineOff=false;}); updateColorBtn(); refreshBrushCursor(); renderPanel();});
   const pdlo=$('pdLineOff'); if(pdlo) pdlo.onclick=()=>{ pendingStyle.lineOff=true; liveApply(it=>{it.lineOff=true;}); renderPanel(); };
-  bindColorField('pdFill', ()=>pendingStyle.fill||'#5AC8FA', v=>{ pendingStyle.fill=v; pendingStyle.fillOn=true; state.globalFill=v; liveApply(it=>{it.fill=v; it.fillOn=true;}); updateColorBtn(); renderPanel(); });
+  bindColorField('pdFill', ()=>pendingStyle.fill||'#5AC8FA', v=>{ pendingStyle.fill=v; pendingStyle.fillOn=true; state.globalFill=v; state.globalFillOn=true; liveApply(it=>{it.fill=v; it.fillOn=true;}); updateColorBtn(); renderPanel(); });
   const pdfc=$('pdFillClear'); if(pdfc) pdfc.onclick=()=>{ pendingStyle.fillOn=false; liveApply(it=>{it.fillOn=false;}); renderPanel(); };
   bindRange('pdOp',v=>{pendingStyle.opacity=v; liveApply(it=>{it.opacity=v;});});
   bindRange('pdCornerR',v=>{ state.cornerR=v/100; liveApply(it=>{ if(it.shapeKind==='rrect' && it.shapeBox){ it.cornerR=v/100; regenRRect(it, it.shapeBox); } }); });
@@ -3118,6 +3117,8 @@ function projectData(){
   return {app:'iconcraft',version:2,
     size:state.size,gridOn:state.gridOn,gridSpacing:state.gridSpacing,gridAbove:state.gridAbove,
     marginPx:state.marginPx,snapOn:state.snapOn,joinEnds:state.joinEnds,trimJoin:state.trimJoin,
+    globalLine:state.globalLine,globalFill:state.globalFill,globalLineOff:state.globalLineOff,globalFillOn:state.globalFillOn,
+    showProps:state.showProps,
     items:state.items,nextId:state.nextId,bucket:state.bucket};
 }
 function migrate(j){
@@ -3133,6 +3134,14 @@ function loadProjectData(raw){
   state.gridAbove=!!j.gridAbove;
   state.marginPx=j.marginPx||0; state.snapOn=!!j.snapOn;
   state.joinEnds=!!j.joinEnds; state.trimJoin=!!j.trimJoin;
+  if(j.globalLine!==undefined) state.globalLine=j.globalLine;
+  if(j.globalFill!==undefined) state.globalFill=j.globalFill;
+  if(j.globalLineOff!==undefined) state.globalLineOff=!!j.globalLineOff;
+  if(j.globalFillOn!==undefined) state.globalFillOn=!!j.globalFillOn;
+  if(j.showProps!==undefined) state.showProps=!!j.showProps;
+  // segurança: nunca deixar as globais nulas (mantém predefinidas visíveis)
+  if(state.globalLine==null) state.globalLine='#1D2333';
+  if(state.globalFill==null) state.globalFill='#5AC8FA';
   state.items=j.items||[];
   state.items.forEach(i=>{ if(i.kind==='stroke' && i.w2==null) i.w2=4; });
   if(j.bucket) Object.assign(state.bucket,j.bucket);

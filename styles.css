@@ -387,7 +387,6 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   }
   #colorFab:active{transform:scale(.94)}
   #colorFab svg{width:32px;height:32px;overflow:visible}
-  body.props-open #colorFab{opacity:0;pointer-events:none;visibility:hidden}
 
   /* inferior direito: ambiente (canvas/zoom/projetos) */
   #mobileProps{right:12px;bottom:12px;width:52px;height:52px;
@@ -718,7 +717,7 @@ body.eyedrop-capturing #workspace{touch-action:none}
 
 
 /* ============ botão de cor ativa (canto superior esquerdo) ============ */
-#colorBtnCirc{fill:#5ac8fa;stroke:#222;stroke-width:5;paint-order:fill stroke}
+#colorBtnCirc{stroke-width:5;paint-order:fill stroke}
 
 
 /* ============ HUD de propriedades do objeto (topo central) ============ */
