@@ -171,7 +171,7 @@ function drawMargin(host){
   rect.setAttribute('x',m); rect.setAttribute('y',m);
   rect.setAttribute('width',n-2*m); rect.setAttribute('height',n-2*m);
   rect.setAttribute('fill','none');
-  rect.setAttribute('stroke','#5b9dff');
+  rect.setAttribute('stroke','#99CC33');
   rect.setAttribute('stroke-opacity','.7');
   rect.setAttribute('stroke-width','2.4');
   rect.setAttribute('vector-effect','non-scaling-stroke');
@@ -220,6 +220,8 @@ function paintStroke(c, it, uniform){
     c.strokeStyle=it.erase?'#000':lineColorOf(it);
     c.lineWidth=it.w;
     c.lineCap=it.cap;
+    c.lineJoin=(it.cap==='round')?'round':(it.cap==='square'?'miter':'bevel');
+    c.miterLimit=4;
     c.stroke(p);
   } else {
     // pena caligráfica: preenchimento usa o CONTORNO da forma (it.d), não a fita da pena
@@ -657,11 +659,12 @@ function makeLive(erase){
   const el=document.createElementNS(SVGNS, nib==='round' ? 'polyline' : 'path');
   const col=erase ? 'var(--danger)' : pendingStyle.color;
   if(nib==='round'){
+    const cap=pendingStyle.cap||'round';
     el.setAttribute('fill','none');
     el.setAttribute('stroke',col);
     el.setAttribute('stroke-width',pendingStyle.w);
-    el.setAttribute('stroke-linecap','round');
-    el.setAttribute('stroke-linejoin','round');
+    el.setAttribute('stroke-linecap',cap);
+    el.setAttribute('stroke-linejoin', cap==='round'?'round':(cap==='square'?'miter':'bevel'));
     if(erase) el.setAttribute('stroke-dasharray','7 5');
   } else {
     el.setAttribute('fill',col);
@@ -2652,8 +2655,8 @@ function secModify(it){
       '<input type="range" id="mdSmooth" min="0" max="100" value="'+smv+'">'+
       '<span class="sm-end">Redondo</span></div>'+
     '<div class="row" style="justify-content:center;margin:2px 0 6px"><span class="range-val" id="mdSmoothv">'+(smv-50)+'</span></div>'+
-    '<div class="btn-row" style="justify-content:center"><button class="btn sm primary" id="mdSmoothApply">Aplicar</button>'+
-      '<button class="btn sm" id="mdSmoothReset">Voltar ao meio</button></div>';
+    '<div class="btn-row"><button class="btn sm pos" id="mdSmoothApply">Aplicar</button>'+
+      '<button class="btn sm neg" id="mdSmoothReset">Voltar ao meio</button></div>';
   // corpo AÇÕES
   const acoesBody =
     '<div class="btn-row">'+
@@ -2733,8 +2736,8 @@ function renderPanel(){
         '<input type="range" id="smDenoise" min="0" max="100" value="'+dv+'">'+
         '<span class="sm-end">Máx</span></div>'+
       '<div class="row" style="justify-content:center;margin:2px 0 8px"><span class="range-val" id="smDenoisev">'+dv+'</span></div>'+
-      '<div class="btn-row" style="justify-content:center"><button class="btn sm primary" id="smApply">Aplicar</button>'+
-        '<button class="btn sm" id="smReset">Voltar ao meio</button></div>'+
+      '<div class="btn-row"><button class="btn sm pos" id="smApply">Aplicar</button>'+
+        '<button class="btn sm neg" id="smReset">Voltar ao meio</button></div>'+
     '</div>';
     // no modo suavizar mostra SÓ esta seção (nada das propriedades do traço)
     P.innerHTML=panelHead()+html;

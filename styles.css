@@ -7,8 +7,9 @@
   --bg0:#0f1118; --bg1:#161923; --bg2:#1d2230; --bg3:#252c3e;
   --line:#2b3245; --line2:#3a4360;
   --text:#e9ecf4; --muted:#8e95a9; --faint:#5d6478;
-  --accent:#5ac8fa; --accent-soft:#173a4c; --accent2:#b78bff;
-  --danger:#ff5d73; --ok:#3ddc97;
+  --accent:#99CC33; --accent-soft:#2a3a16; --accent2:#b78bff;
+  --danger:#ff5d73; --ok:#99CC33;
+  --pos:#99CC33; --pos-soft:#2a3a16; --neg:#FF9901; --neg-soft:#3d2a0a;
   --paper:#1b1f2b; --paper-line:#2a3145;
   --ink-default:#e8ecf5;
   --shadow:0 10px 34px rgba(0,0,0,.5);
@@ -17,8 +18,9 @@
   --bg0:#eef0f5; --bg1:#ffffff; --bg2:#f3f5f9; --bg3:#e7eaf2;
   --line:#d9dde8; --line2:#c2c8d8;
   --text:#1d2333; --muted:#5d6478; --faint:#9aa1b4;
-  --accent:#0b84d6; --accent-soft:#dcf0fd; --accent2:#7a4fd0;
-  --danger:#d6304c; --ok:#0d9d6c;
+  --accent:#99CC33; --accent-soft:#eef6dc; --accent2:#7a4fd0;
+  --danger:#d6304c; --ok:#7DA829;
+  --pos:#7DA829; --pos-soft:#eef6dc; --neg:#E88A00; --neg-soft:#fdefd6;
   --paper:#ffffff; --paper-line:#e3e7ef;
   --ink-default:#1d2333;
   --shadow:0 10px 30px rgba(30,40,70,.14);
@@ -54,10 +56,19 @@ header{
 }
 .btn:hover{border-color:var(--line2);background:var(--bg3)}
 .btn:active{transform:scale(.97)}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.primary:hover{filter:brightness(1.1)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#12210a}
+.btn.primary:hover{filter:brightness(1.05)}
 .btn.danger{color:var(--danger)}
 .btn.sm{padding:5px 9px;font-size:11px}
+/* ação positiva (Aplicar/Aceitar): verde */
+.btn.pos{background:var(--pos);border-color:var(--pos);color:#12210a;justify-content:center}
+.btn.pos:hover{filter:brightness(1.05)}
+/* ação negativa (Cancelar/Fechar): laranja */
+.btn.neg{background:var(--neg);border-color:var(--neg);color:#2a1800;justify-content:center}
+.btn.neg:hover{filter:brightness(1.05)}
+/* ícone antes do texto nos botões de ação */
+.btn.pos::before{content:"✔";font-size:.95em;line-height:1}
+.btn.neg::before{content:"✖";font-size:.9em;line-height:1}
 .btn svg{width:15px;height:15px;fill:currentColor}
 .btn:disabled{opacity:.4;cursor:default;transform:none}
 #themeBtn{width:36px;justify-content:center;padding:7px 0}
@@ -131,7 +142,8 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 .color-inp::-webkit-color-swatch{border:none;border-radius:4px}
 .chk{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;margin-bottom:9px}
 .chk input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
-.btn-row{display:flex;gap:7px;flex-wrap:wrap}
+.btn-row{display:flex;gap:7px;flex-wrap:wrap;justify-content:center}
+.btn-row > .btn{flex:1 1 0;min-width:0;justify-content:center}
 .seg{display:flex;background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden;flex:1}
 .seg button{flex:1;padding:6px 0;color:var(--muted);font-weight:600;font-size:11px}
 .seg button.on{background:var(--accent-soft);color:var(--accent)}
@@ -641,7 +653,8 @@ body.eyedrop-capturing #workspace{touch-action:none}
 .help-close{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:50%;
   background:var(--bg3);border:1px solid var(--line2);color:var(--text);font-size:14px;cursor:pointer;
   display:flex;align-items:center;justify-content:center}
-.help-close:hover{background:var(--danger,#e5484d);color:#fff}
+.help-close{color:var(--neg)}
+.help-close:hover{background:var(--neg);color:#2a1800}
 .help-body{font-size:13px;line-height:1.6;color:var(--text)}
 
 /* alça de arredondamento do retângulo */
@@ -679,7 +692,8 @@ body.eyedrop-capturing #workspace{touch-action:none}
     width:24px;height:24px;border-radius:6px;border:1px solid var(--line2);background:var(--bg3);
     color:var(--text);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;
   }
-  #panelDrag .pd-close:hover{background:var(--danger,#e5484d);color:#fff}
+  #panelDrag .pd-close{color:var(--neg)}
+  #panelDrag .pd-close:hover{background:var(--neg);color:#2a1800}
   /* no desktop, esconde a setinha de retrair mobile (usa o X da barra) */
   #panel > #panelClose{display:none}
 }
