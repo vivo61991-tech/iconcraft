@@ -47,6 +47,13 @@ function defaultInk(){
   return document.documentElement.dataset.theme==='dark' ? '#e8ecf5' : '#1d2333';
 }
 let pendingStyle=null;  // {w,color,nib,cap,...} para os próximos traços
+let currentProjectName=null;  // nome do projeto aberto (null = novo/não salvo)
+let projectDirty=false;       // há alterações não salvas?
+function markDirty(){ projectDirty=true; updateSaveBtn(); }
+function updateSaveBtn(){
+  const sb=$('projSaveOver');
+  if(sb) sb.disabled = !projectDirty;   // só habilita se há o que salvar
+}
 const NEW_STROKE = () => ({
   w:8, w2:4,
   color: (state.globalLine!=null ? state.globalLine : defaultInk()),
@@ -842,6 +849,7 @@ function removeItemById(id){
 function attachDrawEvents(){
   const board=$('board');
   board.addEventListener('pointerdown',e=>{
+    if(eyedropActive) return;   // conta-gotas ativo: o board de desenho/ref não reage
     if(state.tool==='pan'){ panPointerDown(e); return; }
     if(state.tool==='ref' && e.target.id==='refImg'){ startRefDrag(e); return; }
     const t=state.tool;
@@ -1232,9 +1240,10 @@ function renderHits(){
     hit.setAttribute('fill', it.closed ? 'rgba(0,0,0,0)' : 'none');
     hit.setAttribute('stroke','transparent');
     hit.setAttribute('stroke-width',Math.max(14,it.w+8));
-    const noHit=['draw','erase','shape','pan','select','smooth','modify','nodes'].includes(state.tool);
+    const noHit=eyedropActive || ['draw','erase','shape','pan','select','smooth','modify','nodes'].includes(state.tool);
     hit.style.cursor = noHit ? 'inherit' : 'pointer';
     // select é resolvido pelo board (objectAtPoint); aqui capturamos só p/ nodes etc.
+    // no conta-gotas, os hits ficam inertes: clicar só prova a cor, sem selecionar/arrastar.
     hit.style.pointerEvents = noHit ? 'none' : (it.closed ? 'all' : 'stroke');
     hit.addEventListener('pointerdown',e=>{
       if(state.tool==='draw'||state.tool==='erase'||state.tool==='shape'||state.tool==='bucket'||state.tool==='ref') return;
@@ -1849,12 +1858,16 @@ const ICON_SELECT='<svg viewBox="0 0 24 24"><path d="M7 2l12 11.2-5.8.5 3.3 7.3-
 const ICON_PAN='<svg viewBox="0 0 24 24"><path d="M13 6v5h5V7.75L22.25 12 18 16.25V13h-5v5h3.25L12 22.25 7.75 18H11v-5H6v3.25L1.75 12 6 7.75V11h5V6H7.75L12 1.75 16.25 6z"/></svg>';
 const CREATE_TOOLS=['draw','erase','shape','bucket','nodes','ref'];
 function projectsSectionHTML(){
+  const cur = currentProjectName ? ('Projeto aberto: <b>'+currentProjectName.replace(/</g,'&lt;')+'</b>'+(projectDirty?' (alterações não salvas)':' (salvo)')) : 'Projeto novo (ainda não salvo)';
   return '<div class="sec" data-group="projects"><h3>Meus projetos <span class="tag" id="projCount"></span></h3>'+
-    '<div class="hint" style="margin-bottom:10px">Salve o projeto para continuar depois ou compartilhar. "Salvar como…" guarda no navegador; "Baixar arquivo" gera um .json que você pode enviar a outra pessoa; "Abrir arquivo" carrega um .json.</div>'+
+    '<div class="hint" style="margin-bottom:10px">'+cur+'</div>'+
+    '<div class="btn-row" style="margin-bottom:8px">'+
+      '<button class="btn sm pos" id="projSaveOver"'+(projectDirty?'':' disabled')+'>Salvar</button>'+
+      '<button class="btn sm" id="projNew">Novo</button></div>'+
     '<div class="btn-row" style="margin-bottom:10px">'+
       '<button class="btn sm primary" id="projSave">Salvar como…</button>'+
-      '<button class="btn sm" id="projExport">Baixar arquivo (.json)</button>'+
-      '<button class="btn sm" id="projImport">Abrir arquivo (.json)</button></div>'+
+      '<button class="btn sm" id="projExport">Baixar (.json)</button>'+
+      '<button class="btn sm" id="projImport">Abrir (.json)</button></div>'+
     '<div id="projList"></div>'+
   '</div>';
 }
@@ -2704,7 +2717,9 @@ function renderPanel(){
   if(panelMode==='projects'){
     P.innerHTML=panelHead()+projectsSectionHTML();
     const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
-    const pjs=$('projSave'); if(pjs) pjs.onclick=saveProjectAs;
+    const pso=$('projSaveOver'); if(pso) pso.onclick=()=>{ saveProjectOver(); renderPanel(); };
+    const pnw=$('projNew'); if(pnw) pnw.onclick=()=>{ newProject(); renderPanel(); };
+    const pjs=$('projSave'); if(pjs) pjs.onclick=()=>{ saveProjectAs(); renderPanel(); };
     const pje=$('projExport'); if(pje) pje.onclick=exportProjectFile;
     const pji=$('projImport'); if(pji) pji.onclick=importProjectFile;
     renderProjects();
@@ -3182,18 +3197,55 @@ function loadProjectData(raw){
   state.nextId=j.nextId||(Math.max(0,...state.items.map(s=>s.id))+1);
   state.selId=null;
   buildBoard(); renderPanel();
+  projectDirty=false; updateSaveBtn();   // recém-carregado: nada a salvar ainda
 }
 function autosave(){
+  projectDirty=true; updateSaveBtn();
   try{ localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(projectData())); }catch(e){}
 }
 function getProjects(){ try{ return JSON.parse(localStorage.getItem(PROJECTS_KEY)||'{}'); }catch(e){ return {}; } }
 function saveProjectAs(){
-  const name=(prompt('Nome do projeto:','meu-icone')||'').trim();
+  const name=(prompt('Nome do projeto:', currentProjectName||'meu-icone')||'').trim();
   if(!name) return;
   const all=getProjects();
   all[name]={when:Date.now(),data:projectData()};
-  try{ localStorage.setItem(PROJECTS_KEY,JSON.stringify(all)); toast('Projeto "'+name+'" salvo.'); renderProjects(); }
+  try{
+    localStorage.setItem(PROJECTS_KEY,JSON.stringify(all));
+    currentProjectName=name; projectDirty=false; updateSaveBtn();
+    toast('Projeto "'+name+'" salvo.'); renderProjects();
+  }
   catch(e){ toast('Sem espaço no navegador para salvar.',true); }
+}
+// salvar SOBRE o projeto atual (sem perguntar nome)
+function saveProjectOver(){
+  if(!currentProjectName){ saveProjectAs(); return; }  // ainda não tem nome: cai no salvar como
+  const all=getProjects();
+  all[currentProjectName]={when:Date.now(),data:projectData()};
+  try{
+    localStorage.setItem(PROJECTS_KEY,JSON.stringify(all));
+    projectDirty=false; updateSaveBtn();
+    toast('Projeto "'+currentProjectName+'" salvo.'); renderProjects();
+  }
+  catch(e){ toast('Sem espaço no navegador para salvar.',true); }
+}
+// NOVO projeto (tela limpa), perguntando sobre alterações não salvas
+function newProject(){
+  const hasContent = state.items.length>0;
+  if(hasContent && projectDirty){
+    const salvar = confirm('Deseja salvar as alterações antes de criar um novo projeto?\n\nOK = salvar   |   Cancelar = descartar');
+    if(salvar){
+      if(currentProjectName){ saveProjectOver(); }        // projeto existente: salva e segue
+      else { saveProjectAs(); return; }                    // projeto novo: vai pro Salvar como; refaça "Novo" depois
+    }
+  }
+  // limpa tudo e começa do zero
+  pushUndo();
+  state.items=[]; state.selId=null; state.multi=[]; state.nextId=1;
+  if(state.ref){ state.ref.src=null; }
+  currentProjectName=null; projectDirty=false;
+  compose(); renderHits(); renderUi(); renderPanel(); updateSaveBtn();
+  try{ localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(projectData())); }catch(e){}
+  toast('Novo projeto.');
 }
 function renderProjects(){
   const list=$('projList'); if(!list) return;
@@ -3206,7 +3258,7 @@ function renderProjects(){
     item.innerHTML='<span class="name">'+n.replace(/</g,'&lt;')+'</span>'+
       '<span class="when">'+dt.toLocaleDateString('pt-BR')+'</span>';
     const bo=document.createElement('button'); bo.className='btn sm'; bo.textContent='Abrir';
-    bo.onclick=()=>{ pushUndo(); loadProjectData(all[n].data); toast('Projeto "'+n+'" carregado.'); };
+    bo.onclick=()=>{ pushUndo(); loadProjectData(all[n].data); currentProjectName=n; projectDirty=false; updateSaveBtn(); toast('Projeto "'+n+'" carregado.'); };
     const bd=document.createElement('button'); bd.className='btn sm danger'; bd.textContent='×'; bd.title='Excluir projeto';
     bd.onclick=()=>{ if(!confirm('Excluir o projeto "'+n+'"?'))return; delete all[n]; localStorage.setItem(PROJECTS_KEY,JSON.stringify(all)); renderProjects(); };
     item.append(bo,bd); list.appendChild(item);
@@ -3557,6 +3609,7 @@ function startEyedropCapture(){
   const cp=$('colorPicker'); if(cp) cp.style.display='none';
   document.body.classList.add('eyedrop-capturing');
   eyedropActive=true;
+  renderHits();   // hits ficam inertes: clicar não seleciona nem arrasta objetos
   // barra começa com a cor atual
   updateEyedropBar(pickerState.color);
   toast('Toque no desenho para provar a cor. Confirme em Aplicar.');
@@ -3572,6 +3625,7 @@ function endEyedropCapture(apply){
   document.body.classList.remove('eyedrop-capturing');
   const cp=$('colorPicker'); if(cp) cp.style.display='';
   eyedropCapture=null;
+  renderHits();   // restaura os hits normais (seleção volta a funcionar)
   if(apply && cap.provisional){
     setPickerColor(cap.provisional);   // carrega a cor no seletor e aplica no alvo
   }
@@ -3758,6 +3812,7 @@ function objectAtPoint(p){
 }
 /* seleção/deseleção robusta por toque ou clique */
 $('board').addEventListener('pointerdown',e=>{
+  if(eyedropActive) return;   // conta-gotas: não seleciona nem move nada
   if(state.tool!=='select' && state.tool!=='smooth' && state.tool!=='modify' && state.tool!=='nodes') return;
   if(e.button!==undefined && e.button!==0) return;
   // no submodo "adicionar", o clique deve criar nó na linha mesmo que caia perto de um nó
@@ -3825,11 +3880,23 @@ function setZoom(z){
 }
 function zoomFit(){
   const ws=$('workspace');
-  const availW=ws.clientWidth-32, availH=ws.clientHeight-32;
+  const mobile=window.innerWidth<768;
   const base=Math.min(680, state.size);
-  const z=Math.min(availW/base, availH/base);
-  setZoom(Math.max(0.25, Math.min(2.5, z)));
-  ws.scrollLeft=0; ws.scrollTop=0;
+  if(mobile){
+    // no smartphone: prioriza a LARGURA e encosta o desenho no topo
+    // (as opções da ferramenta aparecem embaixo, então quanto mais alto, melhor)
+    const availW=ws.clientWidth-20;
+    let z=availW/base;
+    // se couber com folga na altura, tudo bem; senão, ainda prioriza a largura
+    z=Math.max(0.25, Math.min(2.5, z));
+    setZoom(z);
+    ws.scrollLeft=0; ws.scrollTop=0;   // alinhado ao topo
+  } else {
+    const availW=ws.clientWidth-32, availH=ws.clientHeight-32;
+    const z=Math.min(availW/base, availH/base);
+    setZoom(Math.max(0.25, Math.min(2.5, z)));
+    ws.scrollLeft=0; ws.scrollTop=0;
+  }
 }
 /* ---------------- Pan/Zoom por toque (ferramenta P) ---------------- */
 const activePointers=new Map();

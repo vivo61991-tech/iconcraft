@@ -71,6 +71,7 @@ header{
 .btn.neg::before{content:"✖";font-size:.9em;line-height:1}
 .btn svg{width:15px;height:15px;fill:currentColor}
 .btn:disabled{opacity:.4;cursor:default;transform:none}
+.btn.pos:disabled,.btn.neg:disabled{filter:grayscale(.6);pointer-events:none}
 #themeBtn{width:36px;justify-content:center;padding:7px 0}
 
 /* ---------- main ---------- */
@@ -357,7 +358,9 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   #panel::before{
     content:'';position:absolute;top:0;left:0;right:0;height:34px;z-index:5;
   }
-  #workspace{padding:14px}
+  /* no smartphone o desenho fica o mais alto possível: alinhado ao topo,
+     deixando o espaço de baixo para as opções da ferramenta */
+  #workspace{padding:10px 10px 90px;place-items:start center;align-content:start}
 
   /* toolbox (ferramentas de criação) sobe do FAB inferior esquerdo */
   #toolbox{
@@ -384,12 +387,12 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
   /* inferior esquerdo: ferramentas de criação */
   #mobileFab{left:12px;bottom:12px;width:56px;height:56px;
     background:var(--bg1);border:1px solid var(--line2);color:var(--text)}
-  #mobileFab.fab-active{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none}
+  #mobileFab.fab-active{background:var(--accent);color:#12210a;border:none}
 
   /* superior direito: navegação (selecionar / mover) */
   #mobileNav{right:12px;top:56px;width:52px;height:52px;
     background:var(--bg1);border:1px solid var(--line2);color:var(--text)}
-  #mobileNav.fab-active{background:var(--accent);color:#fff;border:none}
+  #mobileNav.fab-active{background:var(--accent);color:#12210a;border:none}
 
   /* superior esquerdo: cor ativa (linha + preenchimento) */
   #colorFab{
@@ -562,6 +565,10 @@ body.eyedrop-capturing .popmenu{
 }
 /* realça o board */
 body.eyedrop-capturing #board{cursor:crosshair}
+body.eyedrop-capturing #refImg,
+body.eyedrop-capturing .stroke-hit,
+body.eyedrop-capturing .thandle,
+body.eyedrop-capturing .sel-bbox{pointer-events:none !important}
 body.eyedrop-capturing #workspace{touch-action:none}
 
 /* barra superior: cor + hex + status */
