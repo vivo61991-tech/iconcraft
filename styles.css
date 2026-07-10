@@ -295,6 +295,7 @@ input[type=range]{flex:1;accent-color:var(--accent);height:4px;cursor:pointer}
 }
 .popmenu button:hover{background:var(--accent-soft);color:var(--accent)}
 .popmenu button svg{width:19px;height:19px;fill:currentColor;flex:0 0 auto}
+.popmenu-sep{height:1px;background:var(--line2);margin:4px 6px}
 
 /* botão fechar do painel (só aparece no mobile) */
 #panelClose{display:none}

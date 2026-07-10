@@ -1845,6 +1845,20 @@ let mobileMenuOpen=false;
 const ICON_SELECT='<svg viewBox="0 0 24 24"><path d="M7 2l12 11.2-5.8.5 3.3 7.3-2.2 1-3.2-7.4L7 18.5z"/></svg>';
 const ICON_PAN='<svg viewBox="0 0 24 24"><path d="M13 6v5h5V7.75L22.25 12 18 16.25V13h-5v5h3.25L12 22.25 7.75 18H11v-5H6v3.25L1.75 12 6 7.75V11h5V6H7.75L12 1.75 16.25 6z"/></svg>';
 const CREATE_TOOLS=['draw','erase','shape','bucket','nodes','ref'];
+function projectsSectionHTML(){
+  return '<div class="sec" data-group="projects"><h3>Meus projetos <span class="tag" id="projCount"></span></h3>'+
+    '<div class="hint" style="margin-bottom:10px">Salve o projeto para continuar depois ou compartilhar. "Salvar como…" guarda no navegador; "Baixar arquivo" gera um .json que você pode enviar a outra pessoa; "Abrir arquivo" carrega um .json.</div>'+
+    '<div class="btn-row" style="margin-bottom:10px">'+
+      '<button class="btn sm primary" id="projSave">Salvar como…</button>'+
+      '<button class="btn sm" id="projExport">Baixar arquivo (.json)</button>'+
+      '<button class="btn sm" id="projImport">Abrir arquivo (.json)</button></div>'+
+    '<div id="projList"></div>'+
+  '</div>';
+}
+function openProjectsPanel(){
+  if(document.body.classList.contains('props-open') && panelMode==='projects') closeProps();
+  else openProps('projects');
+}
 function colorsSectionHTML(){
   const line = state.globalLineOff ? null : state.globalLine;
   const fill = state.globalFillOn ? state.globalFill : null;
@@ -2131,8 +2145,12 @@ function dropLayer(fromId, toId){
 /* camadas agora é ferramenta comum: ativada via setTool('layers') */
 $('exportMenu').querySelectorAll('button').forEach(b=>b.onclick=()=>{
   closePopMenus();
-  if(b.dataset.export==='svg') $('btnExportSvg').click();
-  else $('btnExportPng').click();
+  const k=b.dataset.export;
+  if(k==='svg') $('btnExportSvg').click();
+  else if(k==='png') $('btnExportPng').click();
+  else if(k==='project') exportProjectFile();       // salvar arquivo de edição
+  else if(k==='open') importProjectFile();           // abrir arquivo de edição
+  else if(k==='projects') openProjectsPanel();       // módulo de lista de projetos
 });
 function deleteSelected(){
   const ids = state.multi.length ? state.multi.slice() : (state.selId!=null ? [state.selId] : []);
@@ -2439,6 +2457,7 @@ function panelTitleFor(){
     modify:'Modificar',smooth:'Suavizar',layers:'Camadas',ref:'Referência'};
   if(panelMode==='env') return 'Ambiente';
   if(panelMode==='colors') return 'Cores ativas';
+  if(panelMode==='projects') return 'Meus projetos';
   return map[state.tool] || 'Opções';
 }
 function panelHead(){
@@ -2674,6 +2693,18 @@ function renderPanel(){
     P.innerHTML=panelHead()+colorsSectionHTML();
     const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
     bindColorsSection();
+    bindPanelDrag();
+    applyPanelMode();
+    return;
+  }
+  // modo PROJETOS — lista de projetos salvos (acionado pelo menu Salvar)
+  if(panelMode==='projects'){
+    P.innerHTML=panelHead()+projectsSectionHTML();
+    const pc=$('panelClose'); if(pc) pc.onclick=closeProps;
+    const pjs=$('projSave'); if(pjs) pjs.onclick=saveProjectAs;
+    const pje=$('projExport'); if(pje) pje.onclick=exportProjectFile;
+    const pji=$('projImport'); if(pji) pji.onclick=importProjectFile;
+    renderProjects();
     bindPanelDrag();
     applyPanelMode();
     return;
